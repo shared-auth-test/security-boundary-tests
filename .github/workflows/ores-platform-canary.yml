@@ -5,12 +5,20 @@ on:
     paths:
       - .github/workflows/ores-platform-canary.yml
       - scripts/verify_ores_foundations.py
+      - scripts/run_ores_foundation_native.sh
+      - scripts/prepare_shared_auth_candidate.sh
+      - scripts/test_shared_auth_candidate.sh
+      - scripts/test_sops_policy.sh
       - docs/ores-platform-canary.md
   push:
     branches: [main]
     paths:
       - .github/workflows/ores-platform-canary.yml
       - scripts/verify_ores_foundations.py
+      - scripts/run_ores_foundation_native.sh
+      - scripts/prepare_shared_auth_candidate.sh
+      - scripts/test_shared_auth_candidate.sh
+      - scripts/test_sops_policy.sh
       - docs/ores-platform-canary.md
   workflow_dispatch:
 
@@ -33,7 +41,7 @@ jobs:
   foundations:
     name: ORES contracts / core / logger
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - name: Check out test policy
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -74,105 +82,19 @@ jobs:
 
       - uses: dart-lang/setup-dart@65eb853c7ba17dde3be364c3d2858773e7144260
 
-      - name: Prove every checkout is the declared exact commit
-        run: |
-          set -euo pipefail
-          test "$(git -C fixtures/ores-interfaces rev-parse HEAD)" = "$ORES_INTERFACES_SHA"
-          test "$(git -C fixtures/ores-lib-core rev-parse HEAD)" = "$ORES_LIB_CORE_SHA"
-          test "$(git -C fixtures/ores.otel.log rev-parse HEAD)" = "$ORES_LOGGER_SHA"
-
-      - name: Verify template provenance, contracts, and secret policy
-        run: |
-          set -euo pipefail
-          python3 scripts/verify_ores_foundations.py \
-            --interfaces fixtures/ores-interfaces \
-            --core fixtures/ores-lib-core
-          python3 fixtures/ores-interfaces/scripts/check_contracts.py
-          python3 fixtures/ores-lib-core/scripts/check_core.py
-
-      - name: Exercise all seven interface language targets
-        run: |
-          set -euo pipefail
-          root="$GITHUB_WORKSPACE/fixtures/ores-interfaces/languages"
-          (cd "$root/rust" && cargo test --locked)
-          (cd "$root/go" && go test ./...)
-          (cd "$root/typescript" && npm test)
-          (cd "$root/python" && PYTHONPATH=src python3 -m unittest discover -s tests -v)
-          (cd "$root/dart" && dart pub get && dart analyze && dart run tool/check.dart)
-          mkdir -p "$RUNNER_TEMP/interfaces-java"
-          javac -d "$RUNNER_TEMP/interfaces-java" \
-            "$root/java/src/main/java/com/oresoftware/interfaces/AuthContracts.java" \
-            "$root/java/src/test/java/com/oresoftware/interfaces/AuthContractsTest.java"
-          java -ea -cp "$RUNNER_TEMP/interfaces-java" com.oresoftware.interfaces.AuthContractsTest
-          (cd "$root/swift" && swift test)
-
-      - name: Exercise all seven core language targets
-        run: |
-          set -euo pipefail
-          root="$GITHUB_WORKSPACE/fixtures/ores-lib-core/languages"
-          (cd "$root/rust" && cargo test --locked)
-          (cd "$root/go" && go test ./...)
-          (cd "$root/typescript" && npm test)
-          (cd "$root/python" && PYTHONPATH=src python3 -m unittest discover -s tests -v)
-          (cd "$root/dart" && dart pub get && dart analyze && dart run tool/check.dart)
-          mkdir -p "$RUNNER_TEMP/core-java"
-          javac -d "$RUNNER_TEMP/core-java" \
-            "$root/java/src/main/java/com/oresoftware/core/OresCore.java" \
-            "$root/java/src/test/java/com/oresoftware/core/OresCoreTest.java"
-          java -ea -cp "$RUNNER_TEMP/core-java" com.oresoftware.core.OresCoreTest
-          (cd "$root/swift" && swift test)
-
-      - name: Exercise the canonical logger workspace with its reviewed lock
-        working-directory: fixtures/ores.otel.log
-        run: |
-          set -euo pipefail
-          cargo metadata --locked --format-version 1 --no-deps > "$RUNNER_TEMP/ores-logger-metadata.json"
-          cargo fmt --all -- --check
-          cargo test --locked --workspace --all-targets
-          cargo clippy --locked --workspace --all-targets -- -D warnings
-
-      - name: Resolve the logger through a fresh exact-revision Cargo consumer
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/logger-consumer/src"
-          cat > "$RUNNER_TEMP/logger-consumer/Cargo.toml" <<EOF
-          [package]
-          name = "shared-auth-test-logger-consumer"
-          version = "0.0.0"
-          edition = "2021"
-
-          [dependencies]
-          next_loggers = { package = "oresoftware-next-loggers", git = "https://github.com/ores-otel/ores.otel.log.git", rev = "$ORES_LOGGER_SHA" }
-          EOF
-          cat > "$RUNNER_TEMP/logger-consumer/src/lib.rs" <<'EOF'
-          #[cfg(test)]
-          mod tests {
-              use next_loggers::{Logger, Options, Value};
-
-              #[test]
-              fn exact_revision_emits_without_global_provider_install() {
-                  let logger = Logger::new(Options {
-                      app_name: "shared-auth-test".into(),
-                      console: false,
-                      ..Options::default()
-                  });
-                  let record = logger
-                      .info(vec![Value::String("certified".into())])
-                      .send_with_store(false)
-                      .expect("logger should emit")
-                      .expect("INFO should pass the default level");
-                  assert_eq!(record.app_name, "shared-auth-test");
-                  assert_eq!(record.message, "certified");
-              }
-          }
-          EOF
-          cargo test --manifest-path "$RUNNER_TEMP/logger-consumer/Cargo.toml"
+      - name: Verify exact heads, provenance, seven language targets, and logger consumers
+        run: bash scripts/run_ores_foundation_native.sh
 
   shared-auth:
     name: Shared Auth ORES integration
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
+      - name: Check out test policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
       - name: Check out Shared Auth at the exact proposed commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -187,12 +109,8 @@ jobs:
           toolchain: stable
           components: rustfmt,clippy
 
-      - name: Prove the Shared Auth checkout is exact
-        run: test "$(git -C shared-auth-server rev-parse HEAD)" = "$SHARED_AUTH_SHA"
-
-      - name: Generate and preserve the proposed reproducible lock
-        working-directory: shared-auth-server
-        run: cargo generate-lockfile
+      - name: Resolve the exact dependency graph and run policy checks
+        run: bash scripts/prepare_shared_auth_candidate.sh
 
       - name: Upload the exact generated Shared Auth lock for review
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -202,23 +120,19 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      - name: Run ORES dependency and secret policy
-        working-directory: shared-auth-server
-        run: python3 scripts/check-ores-dependency-policy.py
-
-      - name: Format, compile, test, and lint Shared Auth
-        working-directory: shared-auth-server
-        run: |
-          set -euo pipefail
-          cargo fmt --all -- --check
-          cargo test --all-targets
-          cargo clippy --all-targets -- -D warnings
+      - name: Format, compile, test, lint, and re-run policy
+        run: bash scripts/test_shared_auth_candidate.sh
 
   sops-policy:
     name: SOPS / Just / Nix structural policy
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
+      - name: Check out test policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
       - name: Check out the exact SOPS lifecycle proposal
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -228,32 +142,5 @@ jobs:
           persist-credentials: false
           fetch-depth: 1
 
-      - name: Prove the SOPS checkout is exact
-        run: test "$(git -C shared-auth-sops rev-parse HEAD)" = "$SHARED_AUTH_SOPS_SHA"
-
-      - name: Run repository policy checks without decrypting secrets
-        working-directory: shared-auth-sops
-        run: |
-          set -euo pipefail
-          bash scripts/check-env-policy.sh
-          python3 scripts/verify-sops-release-policy.py
-          python3 -m py_compile scripts/verify-sops-release-policy.py
-
-      - name: Prove plaintext and private identities are absent
-        working-directory: shared-auth-sops
-        run: |
-          set -euo pipefail
-          test -f env/enc/dev.env.enc
-          test -f env/enc/prod.env.enc
-          test -z "$(git ls-files 'env/dec/**' '.env' '*.agekey' '*.pem' | tr -d '\n')"
-          git check-ignore -q env/dec/dev.env
-          git check-ignore -q env/dec/prod.env
-          git check-ignore -q .env
-          ! grep -R --line-number --binary-files=without-match \
-            -E 'AGE-SECRET-KEY-1[A-Z0-9]{20,}|BEGIN (RSA |EC |OPENSSH |PGP )?PRIVATE KEY' \
-            -- . ':!env/enc' ':!.git'
-
-      - name: Record the deliberate test boundary
-        run: |
-          echo "Structural SOPS/Just/Nix policy passed."
-          echo "No decrypt was attempted: recipient private identities and production plaintext are not test-org inputs."
+      - name: Verify ciphertext-only SOPS Just Nix policy without decrypting
+        run: bash scripts/test_sops_policy.sh
