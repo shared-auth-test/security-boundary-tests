@@ -20,7 +20,7 @@ The candidate immutable public ORES inputs pinned by this revision are:
 
 - `ores-otel/ores-interfaces@289f66434d919d77e57818292e127f7dcb137525`;
 - `ores-otel/ores-lib-core@8f3299409ee33c55fdbb2d2e64630a5e0b72f6fc`;
-- `ores-otel/ores.otel.log@89e0b4ccdb4536c8b9c0846670eb175eee882a86`.
+- `ores-otel/ores.otel.log@b87ac48333e606dbe93dbecf55b04a7882b4605c`.
 
 ## Evidence produced
 
