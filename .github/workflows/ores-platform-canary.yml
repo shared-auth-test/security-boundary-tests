@@ -32,7 +32,7 @@ concurrency:
 env:
   ORES_INTERFACES_SHA: 289f66434d919d77e57818292e127f7dcb137525
   ORES_LIB_CORE_SHA: 8f3299409ee33c55fdbb2d2e64630a5e0b72f6fc
-  ORES_LOGGER_SHA: 21c1ea959dcbe89f65672dc7ee7ad3ea81121583
+  ORES_LOGGER_SHA: 89e0b4ccdb4536c8b9c0846670eb175eee882a86
   SHARED_AUTH_SHA: 76b19ddce5510430db0b73288120d1897f6f84c6
   SHARED_AUTH_SOPS_SHA: e6e1c2ed2153c88f7fd3cc2a50909760f649b865
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
@@ -70,7 +70,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ores-otel/ores.otel.log
-          ref: 21c1ea959dcbe89f65672dc7ee7ad3ea81121583
+          ref: 89e0b4ccdb4536c8b9c0846670eb175eee882a86
           path: fixtures/ores.otel.log
           persist-credentials: false
           fetch-depth: 1
