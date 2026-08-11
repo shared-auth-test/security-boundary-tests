@@ -16,14 +16,24 @@ The workflow checks out immutable 40-character commits for:
 Every checkout is compared to the declared SHA before tests run. Updating a SHA
 is a reviewed compatibility decision, not a floating branch refresh.
 
+The candidate immutable public ORES inputs pinned by this revision are:
+
+- `ores-otel/ores-interfaces@289f66434d919d77e57818292e127f7dcb137525`;
+- `ores-otel/ores-lib-core@8f3299409ee33c55fdbb2d2e64630a5e0b72f6fc`;
+- `ores-otel/ores.otel.log@21c1ea959dcbe89f65672dc7ee7ad3ea81121583`.
+
 ## Evidence produced
 
 The canary verifies repository-template SHA-256 provenance, the nine-method auth
-contract, non-retaining platform-biometric semantics, the ORES core dependency
-policy, all seven language targets, the logger workspace lock, and a fresh Cargo
-git consumer. It then generates the proposed Shared Auth `Cargo.lock`, uploads
-that exact file as a one-day review artifact, and runs formatting, tests, Clippy,
-dependency policy, and secret checks.
+contract, non-retaining platform-biometric semantics, and the Shared Auth v1
+wire/persistence boundary. The latter requires write-only email input, keyed
+lookup/session digests, per-organization revocation authorization, conflict-safe
+idempotency, forced RLS without browser policies, append-only audit records, and
+no persisted secrets or raw biometric material. It also checks the ORES core
+dependency policy, all seven language targets, both Rust logger crates, and a
+fresh exact-revision Cargo consumer. It then generates the proposed Shared Auth
+`Cargo.lock`, uploads that exact file as a one-day review artifact, and runs
+formatting, tests, Clippy, dependency policy, and secret checks.
 
 The SOPS job is deliberately structural. It verifies ciphertext locations,
 ignore rules, distinct recipient policy, Just recipes, pinned Nix inputs, release

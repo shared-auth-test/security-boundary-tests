@@ -52,10 +52,18 @@ run_core
 
 (
   cd "$logger"
-  cargo metadata --locked --format-version 1 --no-deps > "$RUNNER_TEMP/ores-logger-metadata.json"
-  cargo fmt --all -- --check
-  cargo test --locked --workspace --all-targets
-  cargo clippy --locked --workspace --all-targets -- -D warnings
+  cargo metadata --locked --format-version 1 --no-deps \
+    --manifest-path sdk/rust/Cargo.toml > "$RUNNER_TEMP/ores-logger-metadata.json"
+  cargo fmt --manifest-path sdk/rust/Cargo.toml -- --check
+  cargo test --locked --manifest-path sdk/rust/Cargo.toml --all-targets
+  cargo clippy --locked --manifest-path sdk/rust/Cargo.toml --all-targets -- -D warnings
+
+  # rust-context is intentionally a separate crate with a path dependency on
+  # the native SDK. Exercise it directly so thread/task-local hardening cannot
+  # disappear when the repository root is packaged as a polyglot target.
+  cargo fmt --manifest-path sdk/rust-context/Cargo.toml -- --check
+  cargo test --manifest-path sdk/rust-context/Cargo.toml --features tokio --all-targets
+  cargo clippy --manifest-path sdk/rust-context/Cargo.toml --features tokio --all-targets -- -D warnings
 )
 
 mkdir -p "$RUNNER_TEMP/logger-consumer/src"

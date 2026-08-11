@@ -27,6 +27,19 @@ EXPECTED_CORE_DEPENDENCIES = {
     "ores-otel/ores-interfaces": "^0.1.0",
     "oresoftware/next-loggers": "^0.1.0",
 }
+EXPECTED_SHARED_AUTH_ENTITIES = {
+    "organization",
+    "project",
+    "user_account",
+    "membership",
+    "role",
+    "role_binding",
+    "session",
+    "factor",
+    "audit_event",
+    "revocation_operation",
+    "revocation_organization_result",
+}
 SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("GitHub token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{30,}\b")),
     ("Linear token", re.compile(r"\blin_api_[A-Za-z0-9]{20,}\b")),
@@ -134,6 +147,196 @@ def verify_core(root: Path) -> None:
     require(policy.get("rawBiometricMaterialAllowed") is False, "ores-lib-core: raw biometric material must be forbidden")
 
 
+def verify_shared_auth_contract(root: Path) -> None:
+    schema = load_json(root / "contracts/shared-auth/v1/schema.json")
+    require(
+        schema.get("$id") == "https://schemas.oresoftware.com/shared-auth/v1/schema.json",
+        "ores-interfaces: Shared Auth v1 schema identity drift",
+    )
+    definitions = schema.get("$defs", {})
+    required_definitions = {
+        "Organization",
+        "Project",
+        "User",
+        "Membership",
+        "Role",
+        "RoleBinding",
+        "Session",
+        "Factor",
+        "AuditEvent",
+        "OrganizationRevocationResult",
+        "RevokeSessionsByEmailRequest",
+        "RevokeSessionsByEmailResult",
+    }
+    require(
+        required_definitions <= set(definitions),
+        f"ores-interfaces: Shared Auth definitions missing {sorted(required_definitions - set(definitions))}",
+    )
+    for name in required_definitions:
+        require(
+            definitions[name].get("additionalProperties") is False,
+            f"ores-interfaces: {name} must reject unknown fields",
+        )
+
+    session_properties = definitions["Session"].get("properties", {})
+    require("sessionIdHash" in session_properties, "ores-interfaces: session digest projection missing")
+    for forbidden in ("sessionId", "accessToken", "refreshToken", "cookie"):
+        require(forbidden not in session_properties, f"ores-interfaces: unsafe Session field {forbidden}")
+
+    factor_properties = definitions["Factor"].get("properties", {})
+    require(
+        factor_properties.get("privateKeyMaterialPresent", {}).get("const") is False,
+        "ores-interfaces: Factor must forbid private-key material",
+    )
+    require(
+        factor_properties.get("rawBiometricMaterialPresent", {}).get("const") is False,
+        "ores-interfaces: Factor must forbid raw biometric material",
+    )
+    for forbidden in ("privateKey", "totpSeed", "biometricTemplate", "faceImage", "fingerprintImage"):
+        require(forbidden not in factor_properties, f"ores-interfaces: unsafe Factor field {forbidden}")
+
+    request = definitions["RevokeSessionsByEmailRequest"]
+    request_properties = request.get("properties", {})
+    normalized_email = request_properties.get("normalizedEmail", {})
+    require(normalized_email.get("writeOnly") is True, "ores-interfaces: revocation email must be write-only")
+    require(
+        {"requestId", "idempotencyKey", "normalizedEmail", "scope", "reason", "dryRun"}
+        <= set(request.get("required", [])),
+        "ores-interfaces: revocation request security inputs must be required",
+    )
+
+    result_properties = definitions["RevokeSessionsByEmailResult"].get("properties", {})
+    require("normalizedEmail" not in result_properties and "email" not in result_properties, "ores-interfaces: revocation result echoes email")
+    require(
+        result_properties.get("authorizationPolicy", {}).get("const")
+        == "per_organization_sessions.revoke",
+        "ores-interfaces: revocation authorization must be per organization",
+    )
+    require(
+        result_properties.get("onlyAuthorizedOrganizationsProcessed", {}).get("const") is True,
+        "ores-interfaces: unauthorized organizations may not be processed",
+    )
+    organization_result = definitions["OrganizationRevocationResult"].get("properties", {})
+    require(
+        organization_result.get("authorizationVerified", {}).get("const") is True,
+        "ores-interfaces: organization revocation result must prove authorization",
+    )
+
+    request_example = load_json(root / "contracts/shared-auth/v1/examples/revoke-sessions-request.json")
+    result_example = load_json(root / "contracts/shared-auth/v1/examples/revoke-sessions-result.json")
+    require(
+        request_example.get("normalizedEmail") == request_example.get("normalizedEmail", "").lower(),
+        "ores-interfaces: revocation example email is not normalized",
+    )
+    require("normalizedEmail" not in result_example and "email" not in result_example, "ores-interfaces: revocation result example echoes email")
+    organization_results = result_example.get("organizationResults")
+    require(
+        isinstance(organization_results, list) and organization_results,
+        "ores-interfaces: revocation result example must include authorized evidence",
+    )
+    require(
+        all(item.get("authorizationVerified") is True for item in organization_results),
+        "ores-interfaces: revocation example contains an unauthorized organization result",
+    )
+
+
+def verify_shared_auth_persistence(root: Path) -> None:
+    model = load_json(root / "contracts/shared-auth-data-model.json")
+    require(
+        model.get("wireContract") == "ores-otel/ores-interfaces/contracts/shared-auth/v1/schema.json",
+        "ores-lib-core: Shared Auth wire-contract coordinate drift",
+    )
+    entities = set(model.get("entities", []))
+    require(
+        entities == EXPECTED_SHARED_AUTH_ENTITIES,
+        f"ores-lib-core: Shared Auth entity drift: {sorted(entities)}",
+    )
+
+    email_lookup = model.get("emailLookup", {})
+    require(email_lookup.get("persistence") == "hmac_sha256_only", "ores-lib-core: email lookup must use keyed HMAC")
+    require(email_lookup.get("pepperAuthority") == "kms", "ores-lib-core: email HMAC pepper must be KMS-owned")
+    require(email_lookup.get("rawOrNormalizedEmailPersisted") is False, "ores-lib-core: email persistence must be forbidden")
+    require(email_lookup.get("rawOrNormalizedEmailLogged") is False, "ores-lib-core: email logging must be forbidden")
+
+    credential_storage = model.get("credentialStorage", {})
+    for field in (
+        "privateKeysAllowed",
+        "rawBiometricMaterialAllowed",
+        "biometricTemplatesAllowed",
+        "bearerTokensAllowed",
+        "refreshTokensAllowed",
+    ):
+        require(credential_storage.get(field) is False, f"ores-lib-core: unsafe credential policy {field}")
+
+    revocation = model.get("revocation", {})
+    require(revocation.get("authorizationPermission") == "sessions.revoke", "ores-lib-core: revocation permission drift")
+    require(revocation.get("authorizationGranularity") == "per_organization", "ores-lib-core: revocation authorization granularity drift")
+    require(revocation.get("inaccessibleOrganizationIdentitiesDisclosed") is False, "ores-lib-core: inaccessible organization identities may not be disclosed")
+    require(revocation.get("idempotencyScope") == ["actor_subject", "idempotency_key"], "ores-lib-core: idempotency scope drift")
+    require(revocation.get("sameKeyDifferentRequest") == "conflict", "ores-lib-core: mismatched idempotency replay must conflict")
+    require(revocation.get("transactionBoundary") == "one_authorized_organization", "ores-lib-core: revocation transaction boundary drift")
+
+    database_access = model.get("databaseAccess", {})
+    require(database_access.get("browserAccessAllowed") is False, "ores-lib-core: browser database access must be forbidden")
+    require(database_access.get("rowLevelSecurityForced") is True, "ores-lib-core: database must force RLS")
+    require(database_access.get("policiesInstalled") is False, "ores-lib-core: browser-facing RLS policies must not be installed")
+
+    runtime = load_json(root / "contracts/shared-auth-dashboard-runtime.json")
+    authorization = runtime.get("authorization", {})
+    for field in ("requiresOnlineIntrospection", "exactAudienceRequired", "exactOrganizationMembershipRequired"):
+        require(authorization.get(field) is True, f"ores-lib-core: runtime authorization policy {field} must be true")
+    for field in ("crossOrganizationFallbackAllowed", "productRoleClaimsAuthoritative", "directAuthDatabaseAccessAllowed"):
+        require(authorization.get(field) is False, f"ores-lib-core: runtime authorization policy {field} must be false")
+    pagination = runtime.get("pagination", {})
+    require(0 < pagination.get("defaultLimit", 0) <= pagination.get("maximumLimit", 0) <= 200, "ores-lib-core: pagination limits are unsafe")
+    require(pagination.get("cursorOpaque") is True and pagination.get("offsetPaginationAllowed") is False, "ores-lib-core: pagination must use opaque cursors")
+    logging = runtime.get("logging", {})
+    for field in (
+        "globalProviderInstallationAllowed",
+        "highCardinalityIdentityLabelsAllowed",
+        "bearerTokensAllowed",
+        "cookiesAllowed",
+        "privateKeysAllowed",
+        "totpSeedsAllowed",
+        "rawBiometricMaterialAllowed",
+    ):
+        require(logging.get(field) is False, f"ores-lib-core: unsafe dashboard logging policy {field}")
+    capabilities = runtime.get("authenticationCapabilities", {})
+    require(
+        capabilities.get("candidateOrContractAdvertisedAsEnabledAllowed") is False,
+        "ores-lib-core: contract-only authentication must not be advertised as enabled",
+    )
+    require(capabilities.get("sshRequiresOnlineIntrospection") is True, "ores-lib-core: SSH must require online introspection")
+    require(capabilities.get("kerberosRequiresOnlineIntrospection") is True, "ores-lib-core: Kerberos must require online introspection")
+    require(capabilities.get("openpgpAuthority") == "provenance_only", "ores-lib-core: OpenPGP must remain provenance-only")
+    require(capabilities.get("rawBiometricRetentionAllowed") is False, "ores-lib-core: biometric retention must be forbidden")
+
+    sql_path = root / model.get("postgresMigration", "")
+    require(sql_path.is_file() and not sql_path.is_symlink(), "ores-lib-core: canonical Shared Auth migration missing")
+    sql = sql_path.read_text(encoding="utf-8")
+    sql_lower = sql.lower()
+    require("normalized_email " not in sql_lower, "ores-lib-core: normalized email column must not exist")
+    for statement in (
+        "email_lookup_hmac bytea",
+        "session_id_hmac bytea",
+        "request_digest bytea",
+        "UNIQUE (actor_subject, idempotency_key)",
+        "authorization_verified boolean NOT NULL CHECK (authorization_verified)",
+        "authorization_policy = 'per_organization_sessions.revoke'",
+        "CHECK (NOT dry_run OR sessions_revoked = 0)",
+        "CREATE TRIGGER audit_event_append_only",
+        "REVOKE ALL ON ALL TABLES IN SCHEMA ores_shared_auth FROM PUBLIC;",
+    ):
+        require(statement in sql, f"ores-lib-core: persistence invariant missing: {statement}")
+    require(
+        re.search(r"(?im)^\s*CREATE\s+POLICY\b", sql) is None,
+        "ores-lib-core: canonical migration must not install browser RLS policies",
+    )
+    for table in sorted(EXPECTED_SHARED_AUTH_ENTITIES):
+        require(f"ALTER TABLE ores_shared_auth.{table} ENABLE ROW LEVEL SECURITY;" in sql, f"ores-lib-core: {table} does not enable RLS")
+        require(f"ALTER TABLE ores_shared_auth.{table} FORCE ROW LEVEL SECURITY;" in sql, f"ores-lib-core: {table} does not force RLS")
+
+
 def scan_tree(root: Path) -> int:
     scanned = 0
     forbidden_parts = {".git", "node_modules", "target", "__pycache__", ".dart_tool", ".build", "build", "dist"}
@@ -169,6 +372,8 @@ def main() -> int:
     verify_languages(core)
     verify_interfaces(interfaces)
     verify_core(core)
+    verify_shared_auth_contract(interfaces)
+    verify_shared_auth_persistence(core)
     provenance_files = verify_manifest(interfaces, "repository-templates/ores-interfaces")
     provenance_files += verify_manifest(core, "repository-templates/ores-lib-core")
     scanned_files = scan_tree(interfaces) + scan_tree(core)
@@ -176,7 +381,8 @@ def main() -> int:
     print(
         "ORES foundations verified: "
         f"repositories=2 languages={len(EXPECTED_LANGUAGES)} auth_methods={len(EXPECTED_METHODS)} "
-        f"provenance_files={provenance_files} scanned_files={scanned_files}"
+        f"provenance_files={provenance_files} scanned_files={scanned_files} "
+        "shared_auth_contract=v1 shared_auth_persistence=v1"
     )
     return 0
 
