@@ -25,13 +25,7 @@ struct CreationRule {
 }
 
 fn bech32_polymod(values: impl IntoIterator<Item = u8>) -> u32 {
-    const GENERATORS: [u32; 5] = [
-        0x3b6a57b2,
-        0x26508e6d,
-        0x1ea119fa,
-        0x3d4233dd,
-        0x2a1462b3,
-    ];
+    const GENERATORS: [u32; 5] = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
     let mut checksum = 1_u32;
     for value in values {
         let top = checksum >> 25;
@@ -133,7 +127,9 @@ fn parse_recipients(path: &Path) -> Result<BTreeMap<&'static str, BTreeSet<Strin
         }
         for recipient in rule.age {
             decode_age_recipient(&recipient).map_err(|reason| {
-                format!("{environment} SOPS rule contains an invalid public age recipient: {reason}")
+                format!(
+                    "{environment} SOPS rule contains an invalid public age recipient: {reason}"
+                )
             })?;
             if !recipients
                 .get_mut(environment)
@@ -215,12 +211,9 @@ mod tests {
     use super::*;
     use std::io::Write;
 
-    const RECIPIENT_A: &str =
-        "age1qrnva7lnv2jzww6ah5au0cqm4wkvkm5shpzflekdcm4nlu6wnyfqgfaxft";
-    const RECIPIENT_B: &str =
-        "age1txv6jzlds2s03advmdtnm5l93qh4rkqs50nwvzk9yfvsartzue8se8t7jv";
-    const RECIPIENT_C: &str =
-        "age1s8lcnaxn9g77s6j4g7p24w6sgvllpue0lzrsvp3xk02k2gwjj5ssnkp39q";
+    const RECIPIENT_A: &str = "age1qrnva7lnv2jzww6ah5au0cqm4wkvkm5shpzflekdcm4nlu6wnyfqgfaxft";
+    const RECIPIENT_B: &str = "age1txv6jzlds2s03advmdtnm5l93qh4rkqs50nwvzk9yfvsartzue8se8t7jv";
+    const RECIPIENT_C: &str = "age1s8lcnaxn9g77s6j4g7p24w6sgvllpue0lzrsvp3xk02k2gwjj5ssnkp39q";
 
     fn write_fixture(source: &str) -> tempfile::NamedTempFile {
         let mut file = tempfile::NamedTempFile::new().expect("temporary file");
@@ -289,10 +282,7 @@ mod tests {
 
     #[test]
     fn duplicate_recipients_are_rejected_explicitly() {
-        let fixture = valid_fixture(
-            &[RECIPIENT_A, RECIPIENT_A],
-            &[RECIPIENT_B, RECIPIENT_C],
-        );
+        let fixture = valid_fixture(&[RECIPIENT_A, RECIPIENT_A], &[RECIPIENT_B, RECIPIENT_C]);
         let error = validate(fixture.path(), "prod").expect_err("duplicates must fail");
         assert!(error.contains("duplicate age recipient"));
     }
