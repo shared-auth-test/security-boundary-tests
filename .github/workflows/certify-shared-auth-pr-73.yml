@@ -1,0 +1,97 @@
+name: certify Shared Auth PR 73
+
+on:
+  pull_request:
+    paths:
+      - '.sops.yaml'
+      - 'tools/sops-release-policy/**'
+      - '.github/workflows/certify-shared-auth-pr-73.yml'
+      - 'docs/shared-auth-pr-73-certification.md'
+  push:
+    branches: [main]
+    paths:
+      - '.sops.yaml'
+      - 'tools/sops-release-policy/**'
+      - '.github/workflows/certify-shared-auth-pr-73.yml'
+      - 'docs/shared-auth-pr-73-certification.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: certify-shared-auth-pr-73-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-sops-policy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          show-progress: false
+
+      - name: Install declared MSRV
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with:
+          toolchain: 1.85.0
+          components: rustfmt, clippy
+
+      - name: Format, lint, test, and execute
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest=tools/sops-release-policy/Cargo.toml
+          cargo fmt --manifest-path "$manifest" -- --check
+          cargo clippy --manifest-path "$manifest" --all-targets -- -D warnings
+          cargo test --manifest-path "$manifest"
+          output=$(cargo run --quiet --manifest-path "$manifest" -- .sops.yaml prod)
+          grep -F 'production SOPS policy verified (dev recipients=2, prod recipients=2)' <<<"$output"
+
+      - name: Prove former fail-open cases reject
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest=tools/sops-release-policy/Cargo.toml
+          tmp=$(mktemp -d)
+          trap 'rm -rf "$tmp"' EXIT
+
+          cat > "$tmp/bad-checksum.yaml" <<'YAML'
+          creation_rules:
+            - path_regex: ^env/enc/dev\.env\.enc$
+              age:
+                - age1qrnva7lnv2jzww6ah5au0cqm4wkvkm5shpzflekdcm4nlu6wnyfqgfaxfq
+                - age1txv6jzlds2s03advmdtnm5l93qh4rkqs50nwvzk9yfvsartzue8se8t7jv
+            - path_regex: ^env/enc/prod\.env\.enc$
+              age:
+                - age1s8lcnaxn9g77s6j4g7p24w6sgvllpue0lzrsvp3xk02k2gwjj5ssnkp39q
+                - age1txv6jzlds2s03advmdtnm5l93qh4rkqs50nwvzk9yfvsartzue8se8t7jv
+          YAML
+          if cargo run --quiet --manifest-path "$manifest" -- "$tmp/bad-checksum.yaml" prod; then
+            echo 'invalid Bech32 checksum was accepted' >&2
+            exit 1
+          fi
+
+          cat > "$tmp/duplicate.yaml" <<'YAML'
+          creation_rules:
+            - path_regex: ^env/enc/dev\.env\.enc$
+              age:
+                - age1qrnva7lnv2jzww6ah5au0cqm4wkvkm5shpzflekdcm4nlu6wnyfqgfaxft
+                - age1qrnva7lnv2jzww6ah5au0cqm4wkvkm5shpzflekdcm4nlu6wnyfqgfaxft
+            - path_regex: ^env/enc/prod\.env\.enc$
+              age:
+                - age1s8lcnaxn9g77s6j4g7p24w6sgvllpue0lzrsvp3xk02k2gwjj5ssnkp39q
+                - age1txv6jzlds2s03advmdtnm5l93qh4rkqs50nwvzk9yfvsartzue8se8t7jv
+          YAML
+          if cargo run --quiet --manifest-path "$manifest" -- "$tmp/duplicate.yaml" prod; then
+            echo 'duplicate public recipient was accepted' >&2
+            exit 1
+          fi
+
+          if cargo run --quiet --manifest-path "$manifest" -- .sops.yaml prd; then
+            echo 'mistyped environment was accepted' >&2
+            exit 1
+          fi
