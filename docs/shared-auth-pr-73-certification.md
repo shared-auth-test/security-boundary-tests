@@ -25,6 +25,19 @@ lowercase string beginning with `age1` and silently deduplicated repeated values
 It also returned success for non-production environment names without parsing
 configuration. Those fail-open behaviors are now explicit regressions.
 
+## Exact source identity
+
+After canonical Rust 1.85 formatting, the certification source and product PR
+source are byte-identical Git blobs:
+
+```text
+cd489e2c7b520dcf5afb35e30236eed35324e936
+```
+
+The product branch commit carrying that exact source is
+`bfeb1bed35063da5345db1da8ed9d57fede5382e`. Certification applies only to this
+blob and later commits that preserve it exactly.
+
 ## Admission evidence
 
 The certification workflow uses the declared Rust 1.85 MSRV and runs:
@@ -36,6 +49,5 @@ The certification workflow uses the declared Rust 1.85 MSRV and runs:
 - separate command-level rejection probes for a bad checksum, duplicate
   recipient, and mistyped environment.
 
-The Rust source is intended to remain byte-identical to the product PR. Any
-certification result is valid only for the exact source blob recorded in the PR
-body after CI completes.
+The human-authored exact head must be green before the certification PR is made
+ready or merged.
