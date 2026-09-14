@@ -1,3 +1,5 @@
+"""Regression matrix for encoded traversal and callback authority confusion."""
+
 import unittest
 
 from deep_tests.security_model import BoundaryViolation, normalize_relative_path, validate_outbound_url
