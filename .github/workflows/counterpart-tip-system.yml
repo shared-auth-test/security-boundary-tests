@@ -1,0 +1,36 @@
+name: counterpart-tip security system
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions: { contents: read }
+concurrency: { group: "counterpart-tip-security-${{ github.workflow }}-${{ github.ref }}", cancel-in-progress: true }
+jobs:
+  current-production-boundaries:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ secrets.TEST_FLEET_GITHUB_TOKEN || github.token }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with: { persist-credentials: false }
+      - name: Test 1 - scan current counterpart tips for tracked secret material
+        shell: bash
+        run: |
+          set -euo pipefail; primary="${GITHUB_REPOSITORY_OWNER%-test}"
+          gh api --paginate "orgs/${primary}/repos?per_page=100&type=all" --jq '.[] | select(.archived == false) | [.name, .default_branch] | @tsv' > /tmp/primary-repos.tsv
+          test -s /tmp/primary-repos.tsv || { echo "No production repositories are visible for ${primary}. Configure TEST_FLEET_GITHUB_TOKEN for private cross-org coverage." >&2; exit 1; }
+          scanned=0
+          while IFS=$'\t' read -r repo branch; do if [[ "$repo" =~ (infra|interfaces|api|server|core) ]]; then scanned=$((scanned + 1)); sha="$(gh api "repos/${primary}/${repo}/commits/${branch}" --jq .sha)"; paths="$(gh api "repos/${primary}/${repo}/git/trees/${sha}?recursive=1" --jq '.tree[].path')"; if grep -Eq '(^|/)(\.env|id_rsa|id_ed25519|[^/]+\.pem|[^/]+\.key|terraform\.tfstate)$' <<<"$paths"; then echo "Tracked secret/state material found in ${primary}/${repo}@${sha}" >&2; exit 1; fi; fi; done < /tmp/primary-repos.tsv
+          test "$scanned" -gt 0 || { echo "No boundary-oriented production repository was discoverable in ${primary}." >&2; exit 1; }
+      - name: Test 2 - modules-first infra keeps encrypted-secret policy
+        shell: bash
+        run: |
+          set -euo pipefail; primary="${GITHUB_REPOSITORY_OWNER%-test}"; checked=0
+          while IFS=$'\t' read -r repo branch; do [[ "$repo" =~ infra ]] || continue; sha="$(gh api "repos/${primary}/${repo}/commits/${branch}" --jq .sha)"; if gh api "repos/${primary}/${repo}/contents/.ores-infra.toml?ref=${sha}" >/dev/null 2>&1; then gh api "repos/${primary}/${repo}/contents/.ores-infra.toml?ref=${sha}" --jq .content | base64 -d > /tmp/ores-infra.toml; grep -Eq '^modules_root[[:space:]]*=[[:space:]]*"modules"' /tmp/ores-infra.toml; grep -Eq '^environments_root[[:space:]]*=[[:space:]]*"environments"' /tmp/ores-infra.toml; grep -Eq '^secrets[[:space:]]*=[[:space:]]*"sops-age"' /tmp/ores-infra.toml; checked=$((checked + 1)); fi; done < /tmp/primary-repos.tsv
+          if [[ "$checked" -eq 0 ]]; then echo "No .ores-infra.toml is visible at current infra tips; modules-first secret-policy assertion is not yet applicable."; fi
+      - name: Test 3 - zed-pkg dependency surface remains reachable without credentials persistence
+        shell: bash
+        run: |
+          set -euo pipefail; branch="$(gh api repos/zed-pkg/zed-cli --jq .default_branch)"; sha="$(gh api "repos/zed-pkg/zed-cli/commits/${branch}" --jq .sha)"; [[ "$sha" =~ ^[0-9a-f]{40}$ ]]
