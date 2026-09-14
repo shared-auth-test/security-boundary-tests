@@ -1,0 +1,42 @@
+name: x-ores header boundary admission
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  header-boundary:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: "22.22.1"
+      - name: Prove canonical lowercase x-ores namespace and case-insensitive ingress
+        shell: bash
+        run: |
+          node <<'NODE'
+          const assert = require('node:assert/strict');
+          const allowed = new Set(['x-ores-request-id','x-ores-workspace-id','x-ores-session-id']);
+          const canonicalize = headers => Object.fromEntries(Object.entries(headers).map(([k,v]) => [k.toLowerCase(), v]));
+          const admit = headers => {
+            const c = canonicalize(headers);
+            const extensionKeys = Object.keys(c).filter(k => k.startsWith('x-'));
+            for (const key of extensionKeys) {
+              if (!key.startsWith('x-ores-') || !allowed.has(key)) delete c[key];
+            }
+            return c;
+          };
+          const normalized = admit({'X-ORES-REQUEST-ID':'r1','x-Ores-Workspace-Id':'w1','X-OTHER':'drop','authorization':'Bearer x'});
+          assert.equal(normalized['x-ores-request-id'], 'r1');
+          assert.equal(normalized['x-ores-workspace-id'], 'w1');
+          assert.equal('X-ORES-REQUEST-ID' in normalized, false);
+          assert.equal('x-other' in normalized, false);
+          assert.equal(normalized.authorization, 'Bearer x');
+          NODE
