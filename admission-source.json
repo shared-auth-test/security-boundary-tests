@@ -1,0 +1,50 @@
+{
+  "repository": "shared-auth/shared-auth-infra",
+  "commit": "cbd5ad547740a693f81ffffaa2887ebaf9a1035b",
+  "files": [
+    {
+      "path": "runtime-auth/README.md",
+      "blob": "d33094e513dfde82b9fe0c7a21387ca49ef50ffb"
+    },
+    {
+      "path": "runtime-auth/erlang/check.sh",
+      "blob": "a06ac7a56ae1372e81c4bd2bacb22cfd2e019a0b"
+    },
+    {
+      "path": "runtime-auth/erlang/src/shared_auth_gate.erl",
+      "blob": "30455826695b1ada50a2d35cb6fed7751b80dfb2"
+    },
+    {
+      "path": "runtime-auth/erlang/src/shared_auth_introspection.erl",
+      "blob": "e5be6dec5a8db92155a8f325e9b5fdad8d95d6b9"
+    },
+    {
+      "path": "runtime-auth/erlang/test/shared_auth_gate_tests.erl",
+      "blob": "ddf57985cd43e17be62f31db72d03726386bccd1"
+    },
+    {
+      "path": "runtime-auth/erlang/test/shared_auth_introspection_tests.erl",
+      "blob": "e161dfd916b5051d4499a344e5fd3f1862db6623"
+    },
+    {
+      "path": "runtime-auth/proxies/Caddyfile",
+      "blob": "62e9b4f897f99ed31efe3aa5815198a650404733"
+    },
+    {
+      "path": "runtime-auth/proxies/haproxy-auth.lua",
+      "blob": "662801c78fb57f33a18c07f4f3884e1eeddf84df"
+    },
+    {
+      "path": "runtime-auth/proxies/haproxy.cfg",
+      "blob": "9ad877a1c36ebbc05bb5a5f9f0b40a60b3a2322b"
+    },
+    {
+      "path": "runtime-auth/proxies/nginx.conf",
+      "blob": "5ad9ab2db161554431be4ca0212f2f8fb6d302f3"
+    },
+    {
+      "path": "runtime-auth/test/proxy_acceptance.py",
+      "blob": "9c0afd376d3d4bef6c3d0393f4d6eee47d2b88c7"
+    }
+  ]
+}
