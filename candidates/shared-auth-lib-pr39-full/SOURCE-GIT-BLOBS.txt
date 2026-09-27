@@ -1,5 +1,5 @@
 # Exact Rust package slice mirrored from shared-auth/shared-auth-lib.
-# product_head=4b0792a6685fa27188b4ed52d89c580d65015bb5
+# product_head=edec738cfe1c7c2ad6b47c8af9cb16727bc96147
 # Format: <Git blob SHA>  <product-relative path>
 e93a19e8946b5d19cfd6930ecc36ee3aaf40d0ef  Cargo.lock
 fe3e480941c9906e39f4fba7afb325df76ccaf59  Cargo.toml
@@ -9,7 +9,7 @@ f6a1eec444203702e72b4b605ee81b709584dae4  langs/rust/Cargo.toml
 6b3855be4ce66806041b1849cf53c8b2330079ae  langs/rust/src/guard.rs
 7e39a16c61bf6149f6b6f739eec57a86939141b1  langs/rust/src/lib.rs
 70dd5287ff52893f14fcdd163652dfad2a912a65  langs/rust/src/limited.rs
-408c7f18e16ae8ddcb2ec17ab800924271b559c6  langs/rust/src/proof_policy.rs
+c2644e672311c4173628ac5fae91c54243d0a0cc  langs/rust/src/proof_policy.rs
 867c986405c787ef0452cd61a5cf3f2e3bc6db25  langs/rust/src/provider_adapter.rs
 74d3557f0ae28b04c65be2889f0925cdc0f5e922  langs/rust/src/provider_jwt.rs
 7d6a1397d2c43275311c7bdcd5a6d1dc9540003a  langs/rust/src/race.rs
