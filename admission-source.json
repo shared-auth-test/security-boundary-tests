@@ -1,6 +1,6 @@
 {
   "repository": "shared-auth/shared-auth-infra",
-  "commit": "cbd5ad547740a693f81ffffaa2887ebaf9a1035b",
+  "commit": "f429e632e1e9fbba2f7c1a6a6cfea248c975a290",
   "files": [
     {
       "path": "runtime-auth/README.md",
@@ -12,7 +12,7 @@
     },
     {
       "path": "runtime-auth/erlang/src/shared_auth_gate.erl",
-      "blob": "30455826695b1ada50a2d35cb6fed7751b80dfb2"
+      "blob": "63250eef97ab5ece081a983b92e8b5becc14d20f"
     },
     {
       "path": "runtime-auth/erlang/src/shared_auth_introspection.erl",
@@ -20,7 +20,7 @@
     },
     {
       "path": "runtime-auth/erlang/test/shared_auth_gate_tests.erl",
-      "blob": "ddf57985cd43e17be62f31db72d03726386bccd1"
+      "blob": "50685c0e8a9420f03172389a088848f4d948423d"
     },
     {
       "path": "runtime-auth/erlang/test/shared_auth_introspection_tests.erl",
@@ -36,7 +36,7 @@
     },
     {
       "path": "runtime-auth/proxies/haproxy.cfg",
-      "blob": "9ad877a1c36ebbc05bb5a5f9f0b40a60b3a2322b"
+      "blob": "58bf5420d6602304c68d370012c0c07ca684f9ba"
     },
     {
       "path": "runtime-auth/proxies/nginx.conf",

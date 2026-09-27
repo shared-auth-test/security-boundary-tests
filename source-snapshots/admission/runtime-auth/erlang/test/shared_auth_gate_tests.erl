@@ -47,7 +47,35 @@ principal_test() ->
 
 malformed_test_() ->
     [?_assertEqual({error, unavailable}, shared_auth_gate:evaluate(C, policy(), 100))
-        || C <- [#{}, null, #{<<"active">> => <<"true">>}, maps:remove(<<"sid">>, claims())]].
+        || C <- [#{}, null, #{<<"active">> => <<"true">>}, maps:remove(<<"sid">>, claims()),
+                 maps:remove(<<"cred">>, claims())]].
+
+queued_result_after_deadline_test() ->
+    Test = self(),
+    {Caller, Monitor} = spawn_monitor(fun() ->
+        Verify = fun(_, _) ->
+            Test ! {verifier_ready, self()},
+            receive continue -> ok end,
+            Now = erlang:system_time(second),
+            {ok, (claims())#{<<"exp">> => Now + 60, <<"iat">> => Now, <<"nbf">> => Now}}
+        end,
+        Result = shared_auth_gate:authorize(
+            [{<<"authorization">>, <<"Bearer fixture">>}], policy(), Verify, 20),
+        Test ! {decision, Result}
+    end),
+    receive
+        {verifier_ready, Worker} ->
+            true = erlang:suspend_process(Caller),
+            try
+                Worker ! continue,
+                receive after 50 -> ok end
+            after erlang:resume_process(Caller) end
+    after 1000 -> error(verifier_not_started)
+    end,
+    receive {decision, Decision} -> ?assertEqual({error, unavailable}, Decision)
+    after 1000 -> error(missing_decision) end,
+    receive {'DOWN', Monitor, process, Caller, normal} -> ok
+    after 1000 -> error(caller_not_finished) end.
 
 deadline_test() ->
     Headers = [{<<"authorization">>, <<"Bearer fixture">>}],

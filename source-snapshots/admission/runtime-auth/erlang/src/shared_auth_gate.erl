@@ -9,6 +9,7 @@
 %% Its result must originate from online, authenticated Shared Auth introspection.
 -spec authorize(headers(), map(), fun((binary(), map()) -> term()), pos_integer()) -> decision().
 authorize(Headers, Policy, Verify, Timeout) when is_integer(Timeout), Timeout > 0, Timeout =< 5000 ->
+    Deadline = erlang:monotonic_time(millisecond) + Timeout,
     case bearer(Headers) of
         {ok, Token} ->
             Parent = self(),
@@ -20,9 +21,9 @@ authorize(Headers, Policy, Verify, Timeout) when is_integer(Timeout), Timeout > 
             receive
                 {Tag, Result} ->
                     demonitor(Monitor, [flush]),
-                    case Result of
-                        {ok, Claims} -> evaluate(Claims, Policy, erlang:system_time(second));
-                        {error, invalid} -> {error, invalid};
+                    case {erlang:monotonic_time(millisecond) < Deadline, Result} of
+                        {true, {ok, Claims}} -> evaluate(Claims, Policy, erlang:system_time(second));
+                        {true, {error, invalid}} -> {error, invalid};
                         _ -> {error, unavailable}
                     end;
                 {'DOWN', Monitor, process, Pid, _} -> {error, unavailable}
@@ -78,7 +79,8 @@ evaluate_checked(Claims, Policy, Now) ->
       <<"project">> := ActualProject, <<"provider">> := Provider,
       <<"sub">> := Subject, <<"sid">> := Session, <<"jti">> := Jti,
       <<"auth_epoch">> := Epoch, <<"exp">> := Exp, <<"nbf">> := Nbf,
-      <<"iat">> := Iat, <<"aal">> := Aal, <<"scope">> := Scope} = Claims,
+      <<"iat">> := Iat, <<"aal">> := Aal, <<"scope">> := Scope,
+      <<"cred">> := CredentialClass} = Claims,
     IdentityValid = ActualIssuer =:= Issuer andalso ActualAudience =:= Audience
         andalso ActualProject =:= Project andalso lists:member(Provider, Providers)
         andalso lists:all(fun nonempty/1, [Subject, Session, Jti])
@@ -90,7 +92,7 @@ evaluate_checked(Claims, Policy, Now) ->
         true ->
             Scopes = binary:split(Scope, <<" ">>, [global, trim_all]),
             Allowed = is_integer(Aal) andalso Aal >= MinAal
-                andalso maps:get(<<"cred">>, Claims, null) =:= null
+                andalso CredentialClass =:= null
                 andalso lists:all(fun(S) -> lists:member(S, Scopes) end, Required),
             case Allowed of
                 false -> {error, forbidden};
