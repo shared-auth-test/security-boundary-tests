@@ -192,15 +192,9 @@ pub trait ProviderBackend: Send + Sync {
         request: &'a SessionInspectionRequest,
     ) -> ProviderFuture<'a, SessionInspection>;
 
-    fn exchange<'a>(
-        &'a self,
-        request: &'a ExchangeRequest,
-    ) -> ProviderFuture<'a, ExchangeResult>;
+    fn exchange<'a>(&'a self, request: &'a ExchangeRequest) -> ProviderFuture<'a, ExchangeResult>;
 
-    fn revoke<'a>(
-        &'a self,
-        request: &'a RevokeRequest,
-    ) -> ProviderFuture<'a, ()>;
+    fn revoke<'a>(&'a self, request: &'a RevokeRequest) -> ProviderFuture<'a, ()>;
 }
 
 pub trait ProviderAdapter: Send + Sync {
@@ -217,15 +211,9 @@ pub trait ProviderAdapter: Send + Sync {
         request: &'a SessionInspectionRequest,
     ) -> ProviderFuture<'a, SessionInspection>;
 
-    fn exchange<'a>(
-        &'a self,
-        request: &'a ExchangeRequest,
-    ) -> ProviderFuture<'a, ExchangeResult>;
+    fn exchange<'a>(&'a self, request: &'a ExchangeRequest) -> ProviderFuture<'a, ExchangeResult>;
 
-    fn revoke<'a>(
-        &'a self,
-        request: &'a RevokeRequest,
-    ) -> ProviderFuture<'a, ()>;
+    fn revoke<'a>(&'a self, request: &'a RevokeRequest) -> ProviderFuture<'a, ()>;
 }
 
 macro_rules! typed_adapter {
@@ -262,11 +250,7 @@ macro_rules! typed_adapter {
             ) -> ProviderFuture<'a, VerifiedProof> {
                 Box::pin(async move {
                     let proof = self.backend.verify_proof(request).await?;
-                    enforce_proof_provider(
-                        $provider,
-                        ProviderOperation::VerifyProof,
-                        proof,
-                    )
+                    enforce_proof_provider($provider, ProviderOperation::VerifyProof, proof)
                 })
             }
 
@@ -275,8 +259,7 @@ macro_rules! typed_adapter {
                 request: &'a SessionInspectionRequest,
             ) -> ProviderFuture<'a, SessionInspection> {
                 Box::pin(async move {
-                    let mut inspection =
-                        self.backend.inspect_session(request).await?;
+                    let mut inspection = self.backend.inspect_session(request).await?;
                     if let Some(proof) = inspection.proof.take() {
                         inspection.proof = Some(enforce_proof_provider(
                             $provider,
@@ -303,10 +286,7 @@ macro_rules! typed_adapter {
                 })
             }
 
-            fn revoke<'a>(
-                &'a self,
-                request: &'a RevokeRequest,
-            ) -> ProviderFuture<'a, ()> {
+            fn revoke<'a>(&'a self, request: &'a RevokeRequest) -> ProviderFuture<'a, ()> {
                 self.backend.revoke(request)
             }
         }
@@ -354,9 +334,7 @@ pub fn validate_adapter_contract(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proof_policy::{
-        ProofClass, ProviderIdentityKey, VerifiedProof,
-    };
+    use crate::proof_policy::{ProofClass, ProviderIdentityKey, VerifiedProof};
 
     struct StubBackend {
         provider: ProviderKind,
@@ -419,10 +397,7 @@ mod tests {
             })
         }
 
-        fn revoke<'a>(
-            &'a self,
-            _request: &'a RevokeRequest,
-        ) -> ProviderFuture<'a, ()> {
+        fn revoke<'a>(&'a self, _request: &'a RevokeRequest) -> ProviderFuture<'a, ()> {
             Box::pin(async move { Ok(()) })
         }
     }
@@ -445,21 +420,9 @@ mod tests {
         assert_eq!(shared.provider(), ProviderKind::SharedAuth);
         assert_eq!(supabase.provider(), ProviderKind::Supabase);
         assert_eq!(neon.provider(), ProviderKind::NeonAuth);
-        assert!(validate_adapter_contract(
-            &shared,
-            ProviderCapabilities::full()
-        )
-        .is_ok());
-        assert!(validate_adapter_contract(
-            &supabase,
-            ProviderCapabilities::full()
-        )
-        .is_ok());
-        assert!(validate_adapter_contract(
-            &neon,
-            ProviderCapabilities::full()
-        )
-        .is_ok());
+        assert!(validate_adapter_contract(&shared, ProviderCapabilities::full()).is_ok());
+        assert!(validate_adapter_contract(&supabase, ProviderCapabilities::full()).is_ok());
+        assert!(validate_adapter_contract(&neon, ProviderCapabilities::full()).is_ok());
     }
 
     #[tokio::test]
@@ -486,9 +449,7 @@ mod tests {
             provider: ProviderKind::NeonAuth,
             capabilities: ProviderCapabilities::verification_only(),
         });
-        let error =
-            validate_adapter_contract(&adapter, ProviderCapabilities::full())
-                .unwrap_err();
+        let error = validate_adapter_contract(&adapter, ProviderCapabilities::full()).unwrap_err();
         assert_eq!(error.class, ProviderErrorClass::Configuration);
         assert_eq!(error.operation, ProviderOperation::InspectSession);
     }
