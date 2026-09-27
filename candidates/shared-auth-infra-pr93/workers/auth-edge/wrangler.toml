@@ -1,0 +1,13 @@
+name = "shared-auth-edge"
+main = "src/index.mjs"
+compatibility_date = "2025-05-21"
+
+[vars]
+SHARED_AUTH_BASE = "https://gateway.example/shared-auth"
+AUTH_ISSUER = "https://auth.oresoftware.dev"
+AUTH_AUDIENCE = "oresoftware"
+LOGIN_PATH = "/auth/sign-in"
+PROTECTED_PATH_PREFIXES = "/"
+PUBLIC_PATH_PREFIXES = "/shared-auth/,/auth/"
+JWKS_TTL_SECONDS = "300"
+JWKS_STALE_GRACE_SECONDS = "3600"
