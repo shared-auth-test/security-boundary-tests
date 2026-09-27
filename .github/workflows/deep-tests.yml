@@ -36,3 +36,44 @@ jobs:
           PYTHONPATH: src
           DEEP_TEST_SEEDS: '0-49'
         run: python -m unittest discover -s tests -v
+
+  bmscl-compiler-rust-cert:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Verify exact BeamScale compiler source snapshot
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          root = Path("source-snapshots/bmscl-compiler")
+          lock = json.loads((root / "source-lock.json").read_text(encoding="utf-8"))
+          for rel, expected in sorted(lock["files"].items()):
+              body = (root / rel).read_bytes()
+              actual = hashlib.sha1(f"blob {len(body)}\0".encode() + body).hexdigest()
+              if actual != expected:
+                  raise SystemExit(f"{rel}: expected Git blob {expected}, got {actual}")
+          print(f'verified {len(lock["files"])} files from {lock["source_commit"]}')
+          PY
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          components: rustfmt, clippy
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
+        with:
+          otp-version: "29.1.1"
+          gleam-version: "1.18.1"
+          version-type: strict
+      - name: Rust formatting
+        working-directory: source-snapshots/bmscl-compiler
+        run: cargo fmt --all -- --check
+      - name: Rust clippy
+        working-directory: source-snapshots/bmscl-compiler
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Rust tests
+        working-directory: source-snapshots/bmscl-compiler
+        run: cargo test --all-targets
