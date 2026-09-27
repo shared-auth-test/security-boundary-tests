@@ -1,0 +1,58 @@
+name: certify Shared Auth web-server PR 37
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/certify-shared-auth-web-server-pr-37.yml'
+      - 'docs/shared-auth-web-server-pr-37-certification.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  request-policy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          show-progress: false
+
+      - name: Fetch exact public product head
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha=8d0c7d48b0ad43bee48142661a9f7b8b1dde2594
+          git init product
+          git -C product remote add origin https://github.com/shared-auth/shared-auth-web-server.rs.git
+          git -C product fetch --depth=1 origin "$sha"
+          git -C product checkout --detach FETCH_HEAD
+          test "$(git -C product rev-parse HEAD)" = "$sha"
+
+      - name: Install source-declared Rust toolchain
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with:
+          toolchain: stable
+          components: rustfmt,clippy
+
+      - name: Run source-owned gates
+        working-directory: product
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all -- --check
+          cargo clippy --all-targets --all-features -- -D warnings
+          cargo test --all-features
+
+      - name: Prove request-time policy surfaces are present
+        working-directory: product
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'Shared Auth policy is admitted' src/main.rs
+          grep -F 'ResolvedSharedAuthConfig' src/state.rs
+          grep -F 'ConsumerPolicyAction::RenderPage' src/http_server.rs
+          grep -F 'AuthPage::SignUp' src/http_server.rs
+          grep -F 'AuthPage::Recovery' src/http_server.rs
