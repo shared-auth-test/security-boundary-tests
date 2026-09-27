@@ -1,0 +1,24 @@
+{
+  "schema_version": "bmscl-compiler-cert.v1",
+  "source_repository": "beamscale/bmscl-compiler",
+  "source_commit": "eb2b9c3aa49c2bac47c32954b9f8f3efdf98e582",
+  "files": {
+    "Cargo.toml": "d6193ba04fe4c5523d86c7d4002cf88b40c48479",
+    "src/admission.rs": "4ea396e8175a248fcab6b42def53f4bc2a17728e",
+    "src/analyze.rs": "01d060b5f9e8d3380af343ba5f84ceeca0a5e84b",
+    "src/attestation.rs": "244ef0139b04f486d3f6ab69e57afc1b84d7b165",
+    "src/beam_static_limits.rs": "5606739d26f454d90f3165c8bea480e627b47d0f",
+    "src/beam_verify.rs": "7edb3b873623b6e8f8dadc5c7274fadc80a0e088",
+    "src/build.rs": "553cba12f114b77fde3e5dcdffb1330ce6ba91a9",
+    "src/erlang.rs": "094156afba6ea695013ebcdf89a23c242bfeb79a",
+    "src/host_bridge_verify.rs": "4877987836dedf7812143e5707f6bdd7e1baafda",
+    "src/main.rs": "ba410ed0dd7a62ff6838c78c78b091b54ae0cf92",
+    "src/model.rs": "4490542e7151913d34c36d7df8a760f25a5b488a",
+    "src/phoenix_release.rs": "e3f81137c3e33dc88f7fd43950228c941e4e875d",
+    "src/policy.rs": "ac1ad4854e06a27cf78bcf6d4528af5479294b70",
+    "src/process_dict_verify.rs": "3c207c20f2e40a0ea6fec0a1f2677752bc36247f",
+    "src/safety_cache.rs": "99de9b962fbcc0d0ac20736cf5a92e9a507e5f41",
+    "src/trusted_sdk.rs": "8db9c7ed406573856f5e80cc04cde6540dbba2c3",
+    "tests/admission.rs": "cc4645ac258703d4b4ccdeadcc90bd8200e5dafa"
+  }
+}
