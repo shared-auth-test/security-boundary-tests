@@ -1,0 +1,85 @@
+name: surface-contract
+
+# The exported interface of every client under clients/ is declared in
+# contract/surface.contract.json and enforced here. See contract/README.md.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: surface-contract-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    name: contract document
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      languages: ${{ steps.langs.outputs.languages }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+      - name: Validate the contract with the bundled validator
+        run: python3 contract/bin/check_surface.py --schema-only
+      - name: Validate again with the pinned reference jsonschema implementation
+        run: |
+          python3 -m pip install --disable-pip-version-check --quiet \
+            jsonschema==4.25.1 referencing==0.36.2 rpds-py==0.27.0
+          python3 contract/bin/check_surface.py --schema-only
+      - id: langs
+        name: Enumerate enforced clients
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          c = json.load(open("contract/surface.contract.json"))
+          langs = sorted(k for k, v in c["languages"].items() if v["tier"] != "off")
+          print("languages=" + json.dumps(langs))
+          PY
+
+  clients:
+    name: clients/${{ matrix.language }}
+    needs: contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ${{ fromJSON(needs.contract.outputs.languages) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+      - name: Check exported surface
+        run: python3 contract/bin/check_surface.py --lang "${{ matrix.language }}" --format github
+
+  summary:
+    name: full sweep
+    needs: contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+      - name: Every client, one report
+        run: python3 contract/bin/check_surface.py

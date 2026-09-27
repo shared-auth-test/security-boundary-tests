@@ -1,49 +1,65 @@
-name: Deep test suite
+name: certify Shared Auth clients PR 123 policy gates
 
 on:
   pull_request:
-  push:
-    branches: [main]
-  schedule:
-    - cron: "23 9 * * 3"
+    paths:
+      - ".github/workflows/certify-shared-auth-clients-123-policy.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+env:
+  PRODUCT_SHA: 7ebb3eb6d57b729b313076e497aa045b6c303aec
 
 jobs:
-  verify:
+  generated-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: shared-auth/shared-auth-clients
+          ref: 7ebb3eb6d57b729b313076e497aa045b6c303aec
+          path: product
+          persist-credentials: false
+      - name: Assert exact product head
+        run: test "$(git -C product rev-parse HEAD)" = "$PRODUCT_SHA"
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.11"
+      - name: Install pinned jsonschema runtime
+        run: python3 -m pip install --disable-pip-version-check --quiet jsonschema==4.25.1 referencing==0.36.2 rpds-py==0.27.0
+      - name: Check generated policy, freeze bits, and JSON Schema runtime
+        working-directory: product
+        run: python3 scripts/check-generated-contract.py --freeze --require-readonly
+
+  repository-policy:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          repository: shared-auth/shared-auth-clients
+          ref: 7ebb3eb6d57b729b313076e497aa045b6c303aec
+          path: product
           persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
-        with:
-          python-version: '3.12'
-          cache: ''
-      - name: Compile
-        run: python -m compileall -q src tests scripts
-      - name: Verify repository contract
-        run: python scripts/verify_repository.py
-      - name: Run deterministic deep suite
-        env:
-          PYTHONPATH: src
-          DEEP_TEST_SEEDS: '0-49'
-        run: python -m unittest discover -s tests -v
+      - name: Assert exact product head
+        run: test "$(git -C product rev-parse HEAD)" = "$PRODUCT_SHA"
+      - name: Verify repository policy
+        working-directory: product
+        run: scripts/check-repository-policy.sh
+      - name: Test workflow security mutations
+        working-directory: product
+        run: python3 scripts/test_check_workflow_security.py
+      - name: Verify immutable Actions and bounded workflows
+        working-directory: product
+        run: python3 scripts/check-workflow-security.py
 
-
-  certify-clients-policy:
-    if: github.event_name == 'pull_request' && github.head_ref == 'certify-shared-auth-clients-123-policy-20260927'
+  zed-latest-deps:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 30
     env:
-      PRODUCT_SHA: 7ebb3eb6d57b729b313076e497aa045b6c303aec
       ZED_PKG_INTERACTIVE: "false"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -55,18 +71,6 @@ jobs:
           persist-credentials: false
       - name: Assert exact product head
         run: test "$(git -C product rev-parse HEAD)" = "$PRODUCT_SHA"
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
-        with:
-          python-version: "3.11"
-      - name: Generated contract and repository policy
-        working-directory: product
-        run: |
-          set -euo pipefail
-          python3 -m pip install --disable-pip-version-check --quiet jsonschema==4.25.1 referencing==0.36.2 rpds-py==0.27.0
-          python3 scripts/check-generated-contract.py --freeze --require-readonly
-          scripts/check-repository-policy.sh
-          python3 scripts/test_check_workflow_security.py
-          python3 scripts/check-workflow-security.py
       - name: Install checksum-pinned Zed CLI v0.3.0
         run: |
           set -euo pipefail
@@ -80,13 +84,25 @@ jobs:
           test -n "$z"
           install -m 0755 "$z" "$HOME/.local/bin/zed"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - name: Source-owned Zed pre-push gate
+      - run: "$HOME/.local/bin/zed" --version
+      - name: Run source-owned Zed pre-push gate
         working-directory: product
         env:
           GITHUB_TOKEN: ""
-        run: |
-          "$HOME/.local/bin/zed" --version
-          bash .githooks/pre-push --ci
+        run: bash .githooks/pre-push --ci
+
+  tjsv:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: shared-auth/shared-auth-clients
+          ref: 7ebb3eb6d57b729b313076e497aa045b6c303aec
+          path: product
+          persist-credentials: false
+      - name: Assert exact product head
+        run: test "$(git -C product rev-parse HEAD)" = "$PRODUCT_SHA"
       - name: Compare client API peer authorities
         uses: ORESoftware/typespec-json-schema-validator@bd503465dab8c5148fee722b443ed04ff126c9bf
         with:
@@ -114,6 +130,7 @@ jobs:
           polymorphic_models_strategy: oneOf
           quiet: "true"
       - name: Negative semantic-drift canary
+        id: negative
         continue-on-error: true
         uses: ORESoftware/typespec-json-schema-validator@bd503465dab8c5148fee722b443ed04ff126c9bf
         with:
@@ -127,18 +144,21 @@ jobs:
           seal_object_schemas: "true"
           polymorphic_models_strategy: oneOf
           quiet: "true"
-      - name: Require negative canary and verify adapter projections
-        working-directory: product
+      - name: Require fail-closed semantic drift evidence
         run: |
           set -euo pipefail
           node <<'NODE'
           const fs = require('node:fs');
-          const p = '.typespec-json-schema-validator/auth-lifecycle-adapters-negative/report.json';
+          const p = 'product/.typespec-json-schema-validator/auth-lifecycle-adapters-negative/report.json';
           if (!fs.existsSync(p)) throw new Error('negative TJSV receipt missing');
           const receipt = JSON.parse(fs.readFileSync(p, 'utf8'));
           if (receipt.status !== 'stopped_for_evaluation') {
             throw new Error('negative TJSV canary did not stop for evaluation: ' + JSON.stringify(receipt.status));
           }
           NODE
-          node scripts/check-auth-lifecycle-ts.mjs
-          python3 scripts/check-auth-lifecycle-adapters.py
+      - name: Verify formal TypeScript projection
+        working-directory: product
+        run: node scripts/check-auth-lifecycle-ts.mjs
+      - name: Verify cross-runtime adapter evidence
+        working-directory: product
+        run: python3 scripts/check-auth-lifecycle-adapters.py

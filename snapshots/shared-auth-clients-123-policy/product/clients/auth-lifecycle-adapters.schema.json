@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shared-auth.dev/contracts/auth-lifecycle-adapters.schema.json",
+  "$defs": {
+    "adapterDelivery": {
+      "enum": [
+        "reactivex",
+        "native-stream",
+        "promise-future",
+        "async-iterable",
+        "callback"
+      ],
+      "type": "string"
+    },
+    "reactiveLibrary": {
+      "enum": [
+        "none",
+        "rxjs",
+        "rxdart"
+      ],
+      "type": "string"
+    },
+    "lifecycleChannel": {
+      "enum": [
+        "state",
+        "transition",
+        "allows-authenticated-api",
+        "allows-privileged-api",
+        "operation-in-flight"
+      ],
+      "type": "string"
+    },
+    "lifecycleAdapter": {
+      "additionalProperties": false,
+      "properties": {
+        "runtime": {
+          "pattern": "^[a-z0-9][a-z0-9._-]*$",
+          "type": "string"
+        },
+        "library": {
+          "$ref": "#/$defs/reactiveLibrary"
+        },
+        "delivery": {
+          "items": {
+            "$ref": "#/$defs/adapterDelivery"
+          },
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "channels": {
+          "items": {
+            "$ref": "#/$defs/lifecycleChannel"
+          },
+          "minItems": 2,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "replayCurrentState": {
+          "type": "boolean"
+        },
+        "boundedReplay": {
+          "type": "boolean"
+        },
+        "suppressDuplicateCapabilities": {
+          "type": "boolean"
+        },
+        "explicitRejectedTransitions": {
+          "type": "boolean"
+        },
+        "serialDispatch": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "runtime",
+        "library",
+        "delivery",
+        "channels",
+        "replayCurrentState",
+        "boundedReplay",
+        "suppressDuplicateCapabilities",
+        "explicitRejectedTransitions",
+        "serialDispatch"
+      ],
+      "type": "object"
+    },
+    "lifecycleContract": {
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "lifecycleFingerprint": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "adapters": {
+          "items": {
+            "$ref": "#/$defs/lifecycleAdapter"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "lifecycleFingerprint",
+        "adapters"
+      ],
+      "type": "object"
+    }
+  },
+  "$ref": "#/$defs/lifecycleContract"
+}

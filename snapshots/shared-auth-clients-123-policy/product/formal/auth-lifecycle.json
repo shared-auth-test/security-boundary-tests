@@ -1,0 +1,180 @@
+{
+  "schemaVersion": 1,
+  "initialState": "signedOut",
+  "states": [
+    {
+      "name": "signedOut",
+      "hasCredential": false,
+      "operationInFlight": false,
+      "allowsAuthenticatedApi": false,
+      "allowsPrivilegedApi": false
+    },
+    {
+      "name": "authorizing",
+      "hasCredential": false,
+      "operationInFlight": true,
+      "allowsAuthenticatedApi": false,
+      "allowsPrivilegedApi": false
+    },
+    {
+      "name": "exchanging",
+      "hasCredential": false,
+      "operationInFlight": true,
+      "allowsAuthenticatedApi": false,
+      "allowsPrivilegedApi": false
+    },
+    {
+      "name": "unavailable",
+      "hasCredential": false,
+      "operationInFlight": false,
+      "allowsAuthenticatedApi": false,
+      "allowsPrivilegedApi": false
+    },
+    {
+      "name": "authenticated",
+      "hasCredential": true,
+      "operationInFlight": false,
+      "allowsAuthenticatedApi": true,
+      "allowsPrivilegedApi": false
+    },
+    {
+      "name": "refreshing",
+      "hasCredential": true,
+      "operationInFlight": true,
+      "allowsAuthenticatedApi": false,
+      "allowsPrivilegedApi": false
+    },
+    {
+      "name": "stepUpRequired",
+      "hasCredential": true,
+      "operationInFlight": false,
+      "allowsAuthenticatedApi": true,
+      "allowsPrivilegedApi": false
+    },
+    {
+      "name": "steppingUp",
+      "hasCredential": true,
+      "operationInFlight": true,
+      "allowsAuthenticatedApi": false,
+      "allowsPrivilegedApi": false
+    },
+    {
+      "name": "authenticatedAal2",
+      "hasCredential": true,
+      "operationInFlight": false,
+      "allowsAuthenticatedApi": true,
+      "allowsPrivilegedApi": true
+    },
+    {
+      "name": "degraded",
+      "hasCredential": true,
+      "operationInFlight": false,
+      "allowsAuthenticatedApi": false,
+      "allowsPrivilegedApi": false
+    },
+    {
+      "name": "signingOut",
+      "hasCredential": true,
+      "operationInFlight": true,
+      "allowsAuthenticatedApi": false,
+      "allowsPrivilegedApi": false
+    },
+    {
+      "name": "locked",
+      "hasCredential": false,
+      "operationInFlight": false,
+      "allowsAuthenticatedApi": false,
+      "allowsPrivilegedApi": false
+    }
+  ],
+  "events": [
+    "startSignIn",
+    "receiveAuthorizationCode",
+    "authenticationSucceeded",
+    "authenticationRejected",
+    "transientFailure",
+    "cancel",
+    "startRefresh",
+    "refreshSucceeded",
+    "refreshRejected",
+    "requireStepUp",
+    "startStepUp",
+    "stepUpSucceeded",
+    "stepUpRejected",
+    "recover",
+    "startSignOut",
+    "signOutSucceeded",
+    "signOutFailed",
+    "detectCredentialCorruption"
+  ],
+  "effects": [
+    "none",
+    "acquireCredential",
+    "retainCredential",
+    "clearCredential",
+    "clearCredentialAndRetryRevocation",
+    "retryWithoutCredential"
+  ],
+  "transitions": [
+    {"from": "signedOut", "event": "startSignIn", "to": "authorizing", "effect": "none"},
+    {"from": "signedOut", "event": "detectCredentialCorruption", "to": "locked", "effect": "clearCredential"},
+
+    {"from": "authorizing", "event": "receiveAuthorizationCode", "to": "exchanging", "effect": "none"},
+    {"from": "authorizing", "event": "authenticationRejected", "to": "signedOut", "effect": "none"},
+    {"from": "authorizing", "event": "transientFailure", "to": "unavailable", "effect": "retryWithoutCredential"},
+    {"from": "authorizing", "event": "cancel", "to": "signedOut", "effect": "none"},
+
+    {"from": "exchanging", "event": "authenticationSucceeded", "to": "authenticated", "effect": "acquireCredential"},
+    {"from": "exchanging", "event": "authenticationRejected", "to": "signedOut", "effect": "none"},
+    {"from": "exchanging", "event": "transientFailure", "to": "unavailable", "effect": "retryWithoutCredential"},
+    {"from": "exchanging", "event": "cancel", "to": "signedOut", "effect": "none"},
+
+    {"from": "unavailable", "event": "recover", "to": "authorizing", "effect": "none"},
+    {"from": "unavailable", "event": "cancel", "to": "signedOut", "effect": "none"},
+    {"from": "unavailable", "event": "startSignOut", "to": "signedOut", "effect": "none"},
+    {"from": "unavailable", "event": "detectCredentialCorruption", "to": "locked", "effect": "clearCredential"},
+
+    {"from": "authenticated", "event": "startRefresh", "to": "refreshing", "effect": "retainCredential"},
+    {"from": "authenticated", "event": "requireStepUp", "to": "stepUpRequired", "effect": "retainCredential"},
+    {"from": "authenticated", "event": "transientFailure", "to": "degraded", "effect": "retainCredential"},
+    {"from": "authenticated", "event": "startSignOut", "to": "signingOut", "effect": "retainCredential"},
+    {"from": "authenticated", "event": "detectCredentialCorruption", "to": "locked", "effect": "clearCredential"},
+
+    {"from": "refreshing", "event": "refreshSucceeded", "to": "authenticated", "effect": "retainCredential"},
+    {"from": "refreshing", "event": "refreshRejected", "to": "signedOut", "effect": "clearCredential"},
+    {"from": "refreshing", "event": "transientFailure", "to": "degraded", "effect": "retainCredential"},
+    {"from": "refreshing", "event": "startSignOut", "to": "signingOut", "effect": "retainCredential"},
+    {"from": "refreshing", "event": "detectCredentialCorruption", "to": "locked", "effect": "clearCredential"},
+
+    {"from": "stepUpRequired", "event": "startStepUp", "to": "steppingUp", "effect": "retainCredential"},
+    {"from": "stepUpRequired", "event": "startRefresh", "to": "refreshing", "effect": "retainCredential"},
+    {"from": "stepUpRequired", "event": "transientFailure", "to": "degraded", "effect": "retainCredential"},
+    {"from": "stepUpRequired", "event": "cancel", "to": "authenticated", "effect": "retainCredential"},
+    {"from": "stepUpRequired", "event": "startSignOut", "to": "signingOut", "effect": "retainCredential"},
+    {"from": "stepUpRequired", "event": "detectCredentialCorruption", "to": "locked", "effect": "clearCredential"},
+
+    {"from": "steppingUp", "event": "stepUpSucceeded", "to": "authenticatedAal2", "effect": "retainCredential"},
+    {"from": "steppingUp", "event": "stepUpRejected", "to": "stepUpRequired", "effect": "retainCredential"},
+    {"from": "steppingUp", "event": "transientFailure", "to": "stepUpRequired", "effect": "retainCredential"},
+    {"from": "steppingUp", "event": "cancel", "to": "authenticated", "effect": "retainCredential"},
+    {"from": "steppingUp", "event": "startSignOut", "to": "signingOut", "effect": "retainCredential"},
+    {"from": "steppingUp", "event": "detectCredentialCorruption", "to": "locked", "effect": "clearCredential"},
+
+    {"from": "authenticatedAal2", "event": "startRefresh", "to": "refreshing", "effect": "retainCredential"},
+    {"from": "authenticatedAal2", "event": "requireStepUp", "to": "authenticatedAal2", "effect": "retainCredential"},
+    {"from": "authenticatedAal2", "event": "transientFailure", "to": "degraded", "effect": "retainCredential"},
+    {"from": "authenticatedAal2", "event": "startSignOut", "to": "signingOut", "effect": "retainCredential"},
+    {"from": "authenticatedAal2", "event": "detectCredentialCorruption", "to": "locked", "effect": "clearCredential"},
+
+    {"from": "degraded", "event": "recover", "to": "refreshing", "effect": "retainCredential"},
+    {"from": "degraded", "event": "startSignOut", "to": "signingOut", "effect": "retainCredential"},
+    {"from": "degraded", "event": "detectCredentialCorruption", "to": "locked", "effect": "clearCredential"},
+
+    {"from": "signingOut", "event": "signOutSucceeded", "to": "signedOut", "effect": "clearCredential"},
+    {"from": "signingOut", "event": "signOutFailed", "to": "signedOut", "effect": "clearCredentialAndRetryRevocation"},
+    {"from": "signingOut", "event": "detectCredentialCorruption", "to": "locked", "effect": "clearCredential"},
+
+    {"from": "locked", "event": "recover", "to": "signedOut", "effect": "clearCredential"},
+    {"from": "locked", "event": "startSignOut", "to": "signedOut", "effect": "clearCredential"}
+  ]
+}
