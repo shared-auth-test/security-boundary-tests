@@ -1,0 +1,66 @@
+name: certify Shared Auth interfaces PR 86
+
+on:
+  pull_request:
+    paths:
+      - 'candidates/shared-auth-interfaces-pr86/**'
+      - '.github/workflows/certify-shared-auth-interfaces-pr-86.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  provider-identity-binding:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          show-progress: false
+
+      - name: Verify exact source identity and semantic invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          root=candidates/shared-auth-interfaces-pr86/contracts/provider-identity-binding
+          test "$(git hash-object "$root/README.md")" = "012efb534eef657b8c1af5b363bee8c01e8c6d41"
+          test "$(git hash-object "$root/authored.schema.json")" = "110ae74f4eeb9d11e8c2370f085911bf39b7a87b"
+          test "$(git hash-object "$root/main.tsp")" = "611de747e235a96819c45cfc5c28c98eadd4974f"
+          test "$(git hash-object "$root/verify-invariants.mjs")" = "f90ce8a31464d78d8c3d72bf0e646794c838fff6"
+          test "$(git hash-object "$root/instances/IdentityNonMergeScenario/valid/matching-email-distinct-providers.json")" = "bf4ff25f8a11a81e203cd65ee58817c44571b6d9"
+          test "$(git hash-object "$root/instances/ProviderIdentityBinding/valid/supabase-migrated.json")" = "e74a0ef8aa340d08e7a8a34c454da521ba00eed1"
+          node "$root/verify-invariants.mjs"
+
+      - name: Compare independent TypeSpec and JSON Schema authorities
+        uses: ORESoftware/typespec-json-schema-validator@5bab34e08856c47af3600adf40a4aa860fa71c01
+        with:
+          typespec: candidates/shared-auth-interfaces-pr86/contracts/provider-identity-binding/main.tsp
+          schema: candidates/shared-auth-interfaces-pr86/contracts/provider-identity-binding/authored.schema.json
+          instances: candidates/shared-auth-interfaces-pr86/contracts/provider-identity-binding/instances
+          report: .typespec-json-schema-validator/provider-identity-binding/report.json
+          sarif: .typespec-json-schema-validator/provider-identity-binding/report.sarif
+          contract_ir: .typespec-json-schema-validator/provider-identity-binding/contract-ir.json
+          output_dir: .typespec-json-schema-validator/provider-identity-binding/generated
+          max_probes: "128"
+          seal_object_schemas: "true"
+          polymorphic_models_strategy: oneOf
+          quiet: "true"
+
+      - name: Verify passed receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          const report = JSON.parse(readFileSync('.typespec-json-schema-validator/provider-identity-binding/report.json', 'utf8'));
+          const ir = JSON.parse(readFileSync('.typespec-json-schema-validator/provider-identity-binding/contract-ir.json', 'utf8'));
+          assert.equal(report.status, 'passed');
+          assert.equal(report.zeroUnexplainedFindings, true);
+          assert.deepEqual(report.findings, []);
+          assert.equal(ir.status, 'passed');
+          assert.equal(ir.admissible, true);
+          assert.equal(ir.editableAuthority, false);
+          NODE
