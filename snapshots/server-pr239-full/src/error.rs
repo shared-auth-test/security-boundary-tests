@@ -1,0 +1,77 @@
+//! Error types. Every request-time rejection collapses to a small set of HTTP
+//! responses; internal detail stays in logs so a caller cannot probe which
+//! projects or users exist.
+
+use axum::{
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    Json,
+};
+use serde_json::json;
+
+/// Configuration failures (startup only).
+#[derive(Debug, thiserror::Error)]
+pub enum ConfigError {
+    #[error("missing required env var: {0}")]
+    Missing(&'static str),
+    #[error("invalid config value: {0}")]
+    Invalid(&'static str),
+}
+
+/// Request-time errors.
+#[derive(Debug, thiserror::Error)]
+pub enum AuthError {
+    /// Any authentication failure — bad signature, unknown issuer, expired,
+    /// wrong audience, malformed token. Deliberately uniform.
+    #[error("unauthorized")]
+    Unauthorized,
+    /// Disabled or intentionally undiscoverable privileged surface.
+    #[error("not found")]
+    NotFound,
+    /// Malformed request (missing bearer token, bad body).
+    #[error("bad request: {0}")]
+    BadRequest(&'static str),
+    /// Upstream dependency failed (JWKS fetch, DB). Logged with detail.
+    #[error("upstream unavailable")]
+    Upstream,
+    #[error("service unavailable")]
+    Unavailable,
+    #[error("request conflict")]
+    Conflict,
+    #[error("forbidden")]
+    Forbidden,
+    /// The identity is authorized for the operation but must complete a fresh
+    /// phishing-resistant step-up before the request may be retried.
+    #[error("fresh phishing-resistant step-up required")]
+    StepUpRequired,
+    #[error("rate limited")]
+    RateLimited,
+    /// Programming/there-is-no-good-recovery errors.
+    #[error("internal error")]
+    Internal,
+}
+
+impl IntoResponse for AuthError {
+    fn into_response(self) -> Response {
+        let (status, code) = match self {
+            AuthError::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
+            AuthError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
+            AuthError::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request"),
+            AuthError::Upstream => (StatusCode::BAD_GATEWAY, "upstream_unavailable"),
+            AuthError::Unavailable => (StatusCode::SERVICE_UNAVAILABLE, "unavailable"),
+            AuthError::Conflict => (StatusCode::CONFLICT, "request_conflict"),
+            AuthError::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
+            AuthError::StepUpRequired => (
+                StatusCode::PRECONDITION_REQUIRED,
+                "fresh_phishing_resistant_step_up_required",
+            ),
+            AuthError::RateLimited => (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
+            AuthError::Internal => (StatusCode::INTERNAL_SERVER_ERROR, "internal_error"),
+        };
+        // Log the real cause; return only the coarse code to the caller.
+        if matches!(self, AuthError::Upstream | AuthError::Internal) {
+            tracing::error!(error = %self, "request failed");
+        }
+        (status, Json(json!({ "error": code }))).into_response()
+    }
+}
