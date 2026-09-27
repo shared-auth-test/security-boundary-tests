@@ -309,7 +309,7 @@ fn strict_pair(
     let mut selected = Vec::with_capacity(2);
     for provider in policy.providers {
         match by_provider.get(&provider) {
-            Some(ProviderVerdict::Verified(proof)) => selected.push(*proof),
+            Some(ProviderVerdict::Verified(proof)) => selected.push(proof),
             Some(ProviderVerdict::Unavailable { .. }) | None => {
                 return degraded(&required, by_provider);
             }
@@ -346,7 +346,7 @@ fn explicit_class(
 ) -> ArbitrationDecision {
     let required = BTreeSet::from([provider]);
     let proof = match by_provider.get(&provider) {
-        Some(ProviderVerdict::Verified(proof)) => *proof,
+        Some(ProviderVerdict::Verified(proof)) => proof,
         Some(ProviderVerdict::Unavailable { .. }) | None => {
             return degraded(&required, by_provider);
         }
