@@ -9,7 +9,9 @@ use p256::SecretKey;
 use crate::config::SigningConfig;
 use crate::error::AuthError;
 use crate::workload::{WorkloadClientBinding, WorkloadPrincipal, WorkloadSessionSnapshot};
-use crate::workload_token::{build_workload_claims, WorkloadTokenContext, WorkloadTokenProfileError};
+use crate::workload_token::{
+    build_workload_claims, WorkloadTokenContext, WorkloadTokenProfileError,
+};
 
 use super::assurance::AuthenticationAssurance;
 use super::claims::OreClaims;
@@ -255,8 +257,7 @@ impl TokenMinter {
         }
 
         let now = now_secs();
-        if self.ttl_secs == 0
-            || context.session.expires_at_unix > now.saturating_add(self.ttl_secs)
+        if self.ttl_secs == 0 || context.session.expires_at_unix > now.saturating_add(self.ttl_secs)
         {
             return Err(AuthError::Forbidden);
         }
@@ -275,7 +276,10 @@ impl TokenMinter {
             | WorkloadTokenProfileError::InvalidExpiry => AuthError::Unauthorized,
             WorkloadTokenProfileError::ScopeMismatch => AuthError::Forbidden,
             WorkloadTokenProfileError::EmptyIssuer | WorkloadTokenProfileError::EmptyJti => {
-                tracing::error!(?error, "workload minter generated an invalid signing context");
+                tracing::error!(
+                    ?error,
+                    "workload minter generated an invalid signing context"
+                );
                 AuthError::Internal
             }
         })?;
@@ -778,12 +782,16 @@ mod tests {
             .unwrap();
 
         assert!(m.verify(&minted.token).is_err());
-        let claims = m
-            .verify_for_audience(&minted.token, "build-api")
-            .unwrap();
+        let claims = m.verify_for_audience(&minted.token, "build-api").unwrap();
         assert!(claims.is_workload());
-        assert_eq!(claims.sub, format!("workload:{}", principal.service_account_id));
-        assert_eq!(claims.sid.as_deref(), Some(session.session_id.to_string().as_str()));
+        assert_eq!(
+            claims.sub,
+            format!("workload:{}", principal.service_account_id)
+        );
+        assert_eq!(
+            claims.sid.as_deref(),
+            Some(session.session_id.to_string().as_str())
+        );
         assert_eq!(claims.azp.as_deref(), Some(binding.client_id.as_str()));
         assert_eq!(claims.scope, "build:read build:write");
         assert!(claims.email.is_none());
@@ -791,8 +799,13 @@ mod tests {
         assert_eq!(claims.aal, 0);
         assert!(minted.auth_time.is_none());
         assert!(minted.acr.is_none());
-        assert_eq!(minted.amr, vec![crate::workload_token::WORKLOAD_AMR.to_string()]);
-        assert!(crate::workload_token::workload_claims_match_session(&claims, &session));
+        assert_eq!(
+            minted.amr,
+            vec![crate::workload_token::WORKLOAD_AMR.to_string()]
+        );
+        assert!(crate::workload_token::workload_claims_match_session(
+            &claims, &session
+        ));
     }
 
     #[test]
