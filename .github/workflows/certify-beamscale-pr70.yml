@@ -1,0 +1,43 @@
+name: certify BeamScale PR70 lifecycle
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/certify-beamscale-pr70.yml"
+      - "cert/beamscale-pr70/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: "24"
+
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+
+      - name: Verify exact source identity
+        run: |
+          set -euo pipefail
+          root=cert/beamscale-pr70
+          test "$(tr -d '\n' < "$root/SOURCE_SHA")" = "2dafebde1ac77f20c61f00d22b32fb3ff6c9a408"
+          test "$(git hash-object "$root/deploy/baremetal/README.md")" = "cfbc4f81a2996c0d402a5161dc5a3a51be75ef20"
+          test "$(git hash-object "$root/deploy/baremetal/nixos/bmscl-lifecycle-agent.nix")" = "b683ff026d7ccba83197cf91378130c1e5e02020"
+          test "$(git hash-object "$root/deploy/baremetal/process-lifecycle.md")" = "3e4d9b55c637eb30e99f6baf8a55c41abe4ff0c6"
+          test "$(git hash-object "$root/scripts/check-lifecycle-agent-contract.mjs")" = "af7ca56c9a25fcc393f87b0a3638b5faabef9b50"
+
+      - name: Parse NixOS lifecycle module
+        run: nix-instantiate --parse cert/beamscale-pr70/deploy/baremetal/nixos/bmscl-lifecycle-agent.nix >/dev/null
+
+      - name: Enforce exact lifecycle authority boundary
+        working-directory: cert/beamscale-pr70
+        run: node scripts/check-lifecycle-agent-contract.mjs
