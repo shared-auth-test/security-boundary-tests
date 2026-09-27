@@ -1,0 +1,52 @@
+[package]
+org = "shared-auth"
+name = "shared-auth-lib-core"
+version = "0.1.0"
+kind = "lib"
+description = "Shared client, server, edge, and isomorphic Shared Auth core with dual-source parity evidence (SeaORM boundary on PostgreSQL and CockroachDB)"
+license = "MIT"
+keywords = ["auth", "orm", "seaorm", "postgres", "cockroachdb"]
+language = "rust"
+
+[package.repository]
+vcs = "git"
+url = "https://github.com/shared-auth/shared-auth-lib-core"
+
+[dependencies]
+"shared-auth/shared-auth-interfaces" = "^0.1.0"
+"oresoftware/next-loggers-rust" = "^0.1.0"
+
+[install]
+dir = ".vendor/.zed"
+adapter = "none"
+
+[publish]
+include_readme = true
+tag_format = "v{version}"
+exclude = [
+  ".env",
+  ".env.*",
+  "*.env",
+  "env/dec/**",
+  ".direnv/**",
+  ".vendor/.zed/**",
+  ".zed/**",
+  ".zed-pack/**",
+  ".zpkg.lock",
+  "target/**",
+  "**/target/**",
+  "**/node_modules/**",
+  "**/.dart_tool/**",
+  "tmp/**",
+  "**/*.log",
+  ".DS_Store",
+]
+
+[targets.repository]
+dir = "."
+adapter = "none"
+
+[scripts]
+test = "cargo fmt --all -- --check && cargo clippy --all-targets -- -D warnings && cargo test --all-targets"
+boundary = "rustc --edition=2021 -D warnings /tmp/core-contract-guard.rs -o /tmp/core-contract-guard && /tmp/core-contract-guard --kind lib-core"
+release-gate = "/tmp/core-contract-guard --kind lib-core --require-evidence"

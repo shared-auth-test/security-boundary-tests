@@ -1,0 +1,24 @@
+[package]
+name = "shared-auth-lib-core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Shared runtime-neutral authentication domain behavior"
+repository = "https://github.com/shared-auth/shared-auth-lib-core"
+
+[features]
+default = []
+# Structured discovery warnings via the shared ORES logger.
+ores-logging = ["dep:next-loggers"]
+
+[dependencies]
+next-loggers = { package = "oresoftware-next-loggers", git = "https://github.com/ores-otel/ores.otel.log.git", rev = "a5ec8812df692ccc3bdcaaf89d984c44714970d5", optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+hmac = "0.12"
+sha2 = "0.10"
+thiserror = "2"
+
+[lints.rust]
+unsafe_code = "forbid"

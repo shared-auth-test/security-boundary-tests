@@ -1,0 +1,20 @@
+[package]
+name = "shared-auth-lib-core-pr33-cert"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[features]
+default = []
+ores-logging = []
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+hmac = "0.12"
+sha2 = "0.10"
+thiserror = "2"
+
+[lints.rust]
+unsafe_code = "forbid"
