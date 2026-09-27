@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "execution_class": "hostile-bare-process",
+  "tenant_boundary": "one-tenant-per-beam-vm",
+  "isolation_profile": "tenant-worker",
+  "trusted_authorities": {
+    "demand_observation": "host-control-plane",
+    "process_identity": "host-runtime-record",
+    "isolation_admission": "host-agent",
+    "lifecycle_fencing": "ores-locks-and-leases"
+  },
+  "cooperative_runtime_signals": [
+    "quiesce",
+    "drain_acknowledgement",
+    "resume"
+  ],
+  "required_process_evidence": {
+    "no_new_privs": true,
+    "zero_capability_sets": [
+      "inheritable",
+      "permitted",
+      "effective",
+      "bounding",
+      "ambient"
+    ],
+    "namespaces_distinct_from_host": [
+      "user",
+      "mount",
+      "pid",
+      "ipc",
+      "uts",
+      "cgroup",
+      "network"
+    ],
+    "bind_process_start_identity": true,
+    "bind_managed_cgroup": true,
+    "bind_runtime_epoch": true
+  },
+  "network": {
+    "mode": "external",
+    "deny_host_loopback": true,
+    "deny_private_networks": true,
+    "deny_link_local": true,
+    "deny_ec2_imds_ipv4": "169.254.169.254/32",
+    "deny_ec2_imds_ipv6": "fd00:ec2::254/128"
+  },
+  "filesystem": {
+    "forbid_broad_host_mounts": [
+      "/",
+      "/opt",
+      "/run",
+      "/bin",
+      "/sbin",
+      "/usr/bin",
+      "/usr/sbin"
+    ],
+    "required_read_only_mounts": [
+      "/opt/beamscale/honeypot-bin",
+      "/run/bmscl-honeypot/tripwire.sock"
+    ],
+    "tenant_path": "/opt/beamscale/honeypot-bin"
+  },
+  "lifecycle": {
+    "recheck_trusted_demand_after_fence": true,
+    "recheck_trusted_demand_after_cooperative_quiesce": true,
+    "require_host_admission_after_thaw_or_restore": true,
+    "mutation_target": "managed-cgroup-plus-process-start-identity",
+    "bootstrap_lock_provider": "cloudflare-durable-objects-via-ores-locks-and-leases",
+    "beamscale_native_lock_required_for_bootstrap": false,
+    "lease_key_shape": "beamscale/runtime-lifecycle/<environment>/<region>/<runtime-id>",
+    "generic_host_effects": [
+      "freeze",
+      "thaw"
+    ],
+    "checkpoint_restore_authority": "separately-reviewed-typed-adapter",
+    "tenant_supplied_process_target_allowed": false
+  },
+  "stronger_isolation_class": "firecracker"
+}
