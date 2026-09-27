@@ -44,31 +44,33 @@ impl ResolvedSharedAuthConfig {
         match action {
             ConsumerPolicyAction::RenderPage(page) => {
                 if self.pages.show.contains(&page) {
-                    return Ok(());
+                    Ok(())
+                } else {
+                    Err(ConsumerPolicyDenied::PageDisabled(page))
                 }
-                return Err(ConsumerPolicyDenied::PageDisabled(page));
             }
             ConsumerPolicyAction::UseTwoFactor(method) => {
                 if self.factors.two_factor.methods.contains(&method) {
-                    return Ok(());
+                    Ok(())
+                } else {
+                    Err(ConsumerPolicyDenied::TwoFactorMethodDisabled(method))
                 }
-                return Err(ConsumerPolicyDenied::TwoFactorMethodDisabled(method));
             }
             ConsumerPolicyAction::UseThreeFactor(method) => {
                 if !self.factors.three_factor.enabled {
-                    return Err(ConsumerPolicyDenied::ThreeFactorDisabled);
+                    Err(ConsumerPolicyDenied::ThreeFactorDisabled)
+                } else if self.factors.three_factor.methods.contains(&method) {
+                    Ok(())
+                } else {
+                    Err(ConsumerPolicyDenied::ThreeFactorMethodDisabled(method))
                 }
-                if self.factors.three_factor.methods.contains(&method) {
-                    return Ok(());
-                }
-                return Err(ConsumerPolicyDenied::ThreeFactorMethodDisabled(method));
             }
         }
     }
 
     #[must_use]
     pub fn consumer_action_is_admitted(&self, action: ConsumerPolicyAction) -> bool {
-        return self.require_consumer_action(action).is_ok();
+        self.require_consumer_action(action).is_ok()
     }
 }
 
