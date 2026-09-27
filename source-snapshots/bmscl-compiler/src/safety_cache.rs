@@ -7,6 +7,9 @@ use std::{collections::BTreeSet, fs, path::Path};
 
 pub const SAFETY_CACHE_FORMAT_V1: &str = "bmscl-safety-cache-v1";
 pub const SAFETY_ANALYZER_SCHEMA_V1: &str = "bmscl-static-safety-analyzer-v1";
+const MAX_SAFETY_CACHE_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_DEPENDENCY_RECORDS: usize = 100_000;
+const MAX_SOURCE_RECORDS: usize = 100_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -112,9 +115,40 @@ pub fn load_verified_safety_cache(
         "required safety analysis policy SHA-256",
     )?;
 
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("inspect safety cache {}", path.display()))?;
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+        bail!("safety cache must be a regular non-symlink file");
+    }
+    if metadata.len() > MAX_SAFETY_CACHE_BYTES {
+        bail!(
+            "safety cache exceeds the {}-byte limit",
+            MAX_SAFETY_CACHE_BYTES
+        );
+    }
     let bytes = fs::read(path).with_context(|| format!("read safety cache {}", path.display()))?;
+    if bytes.len() as u64 > MAX_SAFETY_CACHE_BYTES {
+        bail!(
+            "safety cache grew beyond the {}-byte limit while being read",
+            MAX_SAFETY_CACHE_BYTES
+        );
+    }
     let mut document: SafetyCacheDocument =
         serde_json::from_slice(&bytes).context("parse signed safety cache JSON")?;
+    if document.dependencies.len() > MAX_DEPENDENCY_RECORDS {
+        bail!(
+            "safety cache contains too many dependency records: {} > {}",
+            document.dependencies.len(),
+            MAX_DEPENDENCY_RECORDS
+        );
+    }
+    if document.sources.len() > MAX_SOURCE_RECORDS {
+        bail!(
+            "safety cache contains too many source records: {} > {}",
+            document.sources.len(),
+            MAX_SOURCE_RECORDS
+        );
+    }
 
     if document.format != SAFETY_CACHE_FORMAT_V1 {
         bail!("unsupported safety cache format `{}`", document.format);
@@ -224,19 +258,33 @@ fn normalize_and_validate_records(document: &mut SafetyCacheDocument) -> Result<
     }
     document.sources.sort();
 
-    if document
-        .dependencies
-        .windows(2)
-        .any(|items| items[0] == items[1])
-    {
-        bail!("safety cache contains duplicate dependency records");
+    let mut dependency_keys = BTreeSet::new();
+    for dependency in &document.dependencies {
+        let key = (
+            dependency.package.as_str(),
+            dependency.version.as_str(),
+            dependency.registry.as_str(),
+            dependency.outer_checksum.as_str(),
+        );
+        if !dependency_keys.insert(key) {
+            bail!(
+                "safety cache contains more than one verdict for dependency {}@{} {}",
+                dependency.package,
+                dependency.version,
+                dependency.outer_checksum
+            );
+        }
     }
-    if document
-        .sources
-        .windows(2)
-        .any(|items| items[0] == items[1])
-    {
-        bail!("safety cache contains duplicate source records");
+
+    let mut source_keys = BTreeSet::new();
+    for source in &document.sources {
+        let key = (source.source_sha256.as_str(), source.deny_cpu_loops);
+        if !source_keys.insert(key) {
+            bail!(
+                "safety cache contains more than one verdict for source {}",
+                source.source_sha256
+            );
+        }
     }
     Ok(())
 }
@@ -471,6 +519,36 @@ mod tests {
             finding.code == "BMSCL_DEPENDENCY_CHECKSUM_NOT_APPROVED"
                 || finding.code == "BMSCL_UNAPPROVED_TRANSITIVE_DEPENDENCY"
         }));
+    }
+
+    #[test]
+    fn rejects_ambiguous_dependency_identity_even_when_signed() {
+        let policy = Policy::default();
+        let source = b"pub fn handle(x) { x }\n";
+        let (mut document, public_key) = signed_document(&policy, source);
+        let mut duplicate = document.dependencies[0].clone();
+        duplicate.source_sha256 =
+            "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd".into();
+        document.dependencies.push(duplicate);
+
+        let signing_key = SigningKey::from_bytes(&[7u8; 32]);
+        document.signature_hex =
+            hex::encode(signing_key.sign(&canonical_payload(&document)).to_bytes());
+
+        let root = tempdir().unwrap();
+        let path = root.path().join("safety-cache.json");
+        fs::write(&path, serde_json::to_vec_pretty(&document).unwrap()).unwrap();
+
+        let error = load_verified_safety_cache(
+            &path,
+            &public_key,
+            Some("zed-ci"),
+            ANALYSIS_POLICY,
+            &policy,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("more than one verdict for dependency"), "{error}");
     }
 
     #[test]
