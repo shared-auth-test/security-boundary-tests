@@ -62,20 +62,16 @@ pub fn build_workload_claims(
         return Err(WorkloadTokenProfileError::InvalidExpiry);
     }
 
-    if !context.session.is_active_for(
-        context.principal,
-        context.binding,
-        context.issued_at_unix,
-    ) {
+    if !context
+        .session
+        .is_active_for(context.principal, context.binding, context.issued_at_unix)
+    {
         return Err(WorkloadTokenProfileError::InactiveLineage);
     }
 
     let effective_scope = context
         .binding
-        .effective_scope(
-            &context.session.scopes,
-            context.oauth_client_allowed_scopes,
-        )
+        .effective_scope(&context.session.scopes, context.oauth_client_allowed_scopes)
         .map_err(|_| WorkloadTokenProfileError::ScopeMismatch)?;
 
     let mut session_scope = context.session.scopes.clone();
@@ -84,7 +80,7 @@ pub fn build_workload_claims(
         return Err(WorkloadTokenProfileError::ScopeMismatch);
     }
 
-    return Ok(OreClaims {
+    Ok(OreClaims {
         sub: format!(
             "{WORKLOAD_SUBJECT_PREFIX}{}",
             context.principal.service_account_id
@@ -114,7 +110,7 @@ pub fn build_workload_claims(
         azp: Some(context.binding.client_id.clone()),
         parent_jti: None,
         cred: Some(OAUTH_CLIENT_CREDENTIAL_CLASS.to_string()),
-    });
+    })
 }
 
 /// Compare signed workload claims with the DB-owned issuance lineage. This is
@@ -182,7 +178,7 @@ pub fn workload_claims_match_session(
         return false;
     }
 
-    return token_scopes == session_scopes;
+    token_scopes == session_scopes
 }
 
 /// Fail closed against the current workload identity/session state.
@@ -214,7 +210,7 @@ pub async fn enforce_workload_session_revocation(
         return Err(AuthError::Unauthorized);
     }
 
-    return Ok(());
+    Ok(())
 }
 
 #[cfg(test)]
@@ -226,16 +222,16 @@ mod tests {
     use super::*;
 
     fn principal() -> WorkloadPrincipal {
-        return WorkloadPrincipal {
+        WorkloadPrincipal {
             service_account_id: Uuid::from_u128(10),
             application_id: Uuid::from_u128(20),
             status: WorkloadStatus::Active,
             auth_epoch: 7,
-        };
+        }
     }
 
     fn binding() -> WorkloadClientBinding {
-        return WorkloadClientBinding {
+        WorkloadClientBinding {
             client_id: "svc-build".to_string(),
             service_account_id: Uuid::from_u128(10),
             application_id: Uuid::from_u128(20),
@@ -244,11 +240,11 @@ mod tests {
             credential_epoch: 3,
             allowed_scopes: vec!["build:read".to_string(), "build:write".to_string()],
             default_scopes: vec!["build:read".to_string()],
-        };
+        }
     }
 
     fn session() -> WorkloadSessionSnapshot {
-        return WorkloadSessionSnapshot {
+        WorkloadSessionSnapshot {
             session_id: Uuid::from_u128(30),
             service_account_id: Uuid::from_u128(10),
             client_id: "svc-build".to_string(),
@@ -259,11 +255,11 @@ mod tests {
             scopes: vec!["build:write".to_string(), "build:read".to_string()],
             expires_at_unix: 2_000,
             revoked: false,
-        };
+        }
     }
 
     fn oauth_allowed() -> Vec<String> {
-        return vec!["build:read".to_string(), "build:write".to_string()];
+        vec!["build:read".to_string(), "build:write".to_string()]
     }
 
     fn claims() -> OreClaims {
@@ -271,7 +267,7 @@ mod tests {
         let binding = binding();
         let session = session();
         let oauth_allowed = oauth_allowed();
-        return build_workload_claims(WorkloadTokenContext {
+        build_workload_claims(WorkloadTokenContext {
             principal: &principal,
             binding: &binding,
             session: &session,
@@ -280,7 +276,7 @@ mod tests {
             issued_at_unix: 1_000,
             jti: "00000000-0000-0000-0000-000000000040",
         })
-        .unwrap();
+        .unwrap()
     }
 
     #[test]
@@ -290,10 +286,16 @@ mod tests {
         let session = session();
         let claims = claims();
 
-        assert_eq!(claims.sub, format!("workload:{}", principal.service_account_id));
+        assert_eq!(
+            claims.sub,
+            format!("workload:{}", principal.service_account_id)
+        );
         assert_eq!(claims.provider, WORKLOAD_PROVIDER);
         assert_eq!(claims.provider_tenant, principal.application_id.to_string());
-        assert_eq!(claims.provider_subject, principal.service_account_id.to_string());
+        assert_eq!(
+            claims.provider_subject,
+            principal.service_account_id.to_string()
+        );
         assert_eq!(claims.aud, binding.audience);
         assert_eq!(claims.sid, Some(session.session_id.to_string()));
         assert_eq!(claims.auth_epoch, principal.auth_epoch);
