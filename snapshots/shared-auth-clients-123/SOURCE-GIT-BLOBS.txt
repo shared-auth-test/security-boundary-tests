@@ -1,0 +1,24 @@
+# Product: shared-auth/shared-auth-clients
+# Exact product head: e0039a6f96f4f2f276efa646b7a1430311c30aa0
+# Format: git-blob-sha path-relative-to-this-directory
+91335f6c94e1e713f590450051e1a0a4c47dec47 clients/rust/Cargo.toml
+d1b9b2fb8f4c5d118e74fa45a456a5b6796a8870 clients/rust/src/lib.rs
+a567c25e833a2cade0f5aa36b60dec761125d4a1 clients/rust/src/session.rs
+bf4cc707df57e7db2294da8ed7fcaf446025ca15 clients/ts/package.json
+0f1e0babfdf7dbb33dd6795daa74a8b7427cbd6a clients/ts/tsconfig.json
+c9746a84a100a4bd6c0cd58943291711308871ea clients/ts/src/index.ts
+c9b1fdd558a674f1dca7545d631b814b4d587bbf clients/ts/test/passwordless.test.mjs
+dd3d75d2c19f0f81d16fdf9bb0584debb525e6cf clients/dart/pubspec.yaml
+97ee7763b3afe2064131859ff18f17b819db45c4 clients/dart/lib/shared_auth_client.dart
+d2b969e0edee80be282ce7714be09f6fca71072f clients/dart/lib/src/client.dart
+2526ad854267b929f84fa2b5c8fdfb77f1fb18bb clients/dart/lib/src/errors.dart
+6c063cbab63c4f7bf947510929b572d27686b48f clients/dart/lib/src/models.dart
+1e776813d6516264beada0a723c48055050814c6 clients/dart/lib/src/auth_lifecycle.dart
+3fdf4f323a7a1d2f3bfd4aa93c30fbe697dafe20 clients/dart/lib/src/auth_lifecycle_hooks.dart
+2597be5d6fdb2c2dda18559b88b6f9043cf83eba clients/dart/lib/src/auth_lifecycle_rx.dart
+716b76455d6a3621aaaf1ee302b2fdffc0ea7fa6 clients/dart/test/passwordless_test.dart
+1f92da6af7bd89cb763961d0bffb47d0355f7814 clients/gleam/gleam.toml
+1d2562d98840ad9ff5e8c6052c131720b846116f clients/gleam/manifest.toml
+745dd685eccb23c3350ada2dc423e0b923d02a9e clients/gleam/src/shared_auth_client.gleam
+04280187dadd684257e7621f0186f13da2cc02d4 clients/gleam/src/shared_auth_client/model.gleam
+56b97bc91d3db3729702ffc1eeb1ee74a34b66db clients/gleam/test/passwordless_test.gleam
