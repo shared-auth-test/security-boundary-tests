@@ -44,7 +44,7 @@ jobs:
           toolchain: 1.88.0
           components: rustfmt,clippy
 
-      - name: Format, test, and lint changed source files
+      - name: Format, test, and strict-lint exact source files
         working-directory: candidates/shared-auth-lib-core-pr33
         shell: bash
         run: |
@@ -52,45 +52,7 @@ jobs:
           rustfmt +1.88.0 --check src/consumer_policy.rs
           rustfmt +1.88.0 --check --config skip_children=true src/lib.rs
           cargo test --all-targets
-          cargo clippy --all-targets --message-format=json -- \
-            -W clippy::all \
-            -W clippy::pedantic \
-            -W clippy::unwrap_used \
-            -W clippy::expect_used \
-            -W clippy::indexing_slicing > /tmp/lib-core-clippy.json
-          node --input-type=module <<'NODE'
-          import { readFileSync } from 'node:fs';
-
-          const changed = new Set(['src/consumer_policy.rs', 'src/lib.rs']);
-          const findings = [];
-          for (const line of readFileSync('/tmp/lib-core-clippy.json', 'utf8').split('\n')) {
-            if (!line.trim()) continue;
-            let event;
-            try {
-              event = JSON.parse(line);
-            } catch {
-              continue;
-            }
-            if (event.reason !== 'compiler-message') continue;
-            const diagnostic = event.message;
-            if (!['warning', 'error'].includes(diagnostic?.level)) continue;
-            const files = (diagnostic.spans ?? [])
-              .filter((span) => span.is_primary)
-              .map((span) => span.file_name);
-            if (files.some((file) => changed.has(file))) {
-              findings.push({
-                code: diagnostic.code?.code ?? '<no-code>',
-                message: diagnostic.message,
-                files,
-              });
-            }
-          }
-          if (findings.length) {
-            console.error(JSON.stringify(findings, null, 2));
-            process.exit(1);
-          }
-          console.log('changed-file Clippy gate: zero findings');
-          NODE
+          cargo clippy --all-targets -- -D warnings
 
       - name: Run exact lib-core boundary guard
         working-directory: candidates/shared-auth-lib-core-pr33
