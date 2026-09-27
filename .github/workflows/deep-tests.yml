@@ -90,6 +90,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo fmt --all
+          cargo clippy --fix --allow-dirty --allow-staged --all-targets
           for f in src/workload.rs src/workload/store.rs src/workload_token.rs src/token/minter.rs; do
             echo "__FMT_BEGIN__ $f"
             base64 -w0 "$f"
