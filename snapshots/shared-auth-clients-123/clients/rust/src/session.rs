@@ -129,7 +129,7 @@ impl SharedAuthClient {
         let refresh_token = required_credential(refresh_token, "refresh token")?;
         let request = self.request(Method::POST, &["auth", "logout"])?;
         let request = self.with_json(request, &RefreshRequest { refresh_token })?;
-        return decode_empty(request.send().await?);
+        decode_empty(request.send().await?)
     }
 }
 
@@ -142,21 +142,21 @@ fn validated_email(value: &str) -> Result<&str, ClientError> {
     {
         return Err(ClientError::InvalidInput("email"));
     }
-    return Ok(value);
+    Ok(value)
 }
 
 fn validate_registration_password(value: &str) -> Result<(), ClientError> {
     if value.len() < MIN_REGISTRATION_PASSWORD_BYTES || value.len() > MAX_PASSWORD_BYTES {
         return Err(ClientError::InvalidInput("password"));
     }
-    return Ok(());
+    Ok(())
 }
 
 fn validate_login_password(value: &str) -> Result<(), ClientError> {
     if value.is_empty() || value.len() > MAX_PASSWORD_BYTES {
         return Err(ClientError::InvalidInput("password"));
     }
-    return Ok(());
+    Ok(())
 }
 
 fn validated_display_name(value: Option<&str>) -> Result<Option<&str>, ClientError> {
@@ -170,14 +170,14 @@ fn validated_display_name(value: Option<&str>) -> Result<Option<&str>, ClientErr
     if trimmed.len() > 160 || trimmed.chars().any(char::is_control) {
         return Err(ClientError::InvalidInput("display name"));
     }
-    return Ok(Some(trimmed));
+    Ok(Some(trimmed))
 }
 
 fn validate_email_otp(value: &str) -> Result<(), ClientError> {
     if value.len() != 6 || !value.bytes().all(|byte| byte.is_ascii_digit()) {
         return Err(ClientError::InvalidInput("email otp"));
     }
-    return Ok(());
+    Ok(())
 }
 
 #[cfg(test)]
@@ -283,6 +283,6 @@ mod tests {
             )
             .unwrap();
         });
-        return (format!("http://{address}"), receiver);
+        (format!("http://{address}"), receiver)
     }
 }
