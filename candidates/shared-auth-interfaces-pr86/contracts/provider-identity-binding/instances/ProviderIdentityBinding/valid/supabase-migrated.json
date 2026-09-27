@@ -1,6 +1,11 @@
 {
   "schema_version": 1,
-  "key": {"provider": "supabase", "issuer": "https://example-project.supabase.co/auth/v1", "subject": "9a7b6c5d-2222-4e8f-8a1b-000000000002", "realm": "customer"},
+  "key": {
+    "provider": "supabase",
+    "issuer": "https://example-project.supabase.co/auth/v1",
+    "subject": "9a7b6c5d-2222-4e8f-8a1b-000000000002",
+    "realm": "customer"
+  },
   "shared_user_id": "0f8c2a1e-1111-4b7a-9c3d-000000000001",
   "status": "active",
   "legacy": {
