@@ -34,7 +34,7 @@ jobs:
           node "$root/verify-invariants.mjs"
 
       - name: Compare independent TypeSpec and JSON Schema authorities
-        uses: ORESoftware/typespec-json-schema-validator@5bab34e08856c47af3600adf40a4aa860fa71c01
+        uses: ORESoftware/typespec-json-schema-validator@bd503465dab8c5148fee722b443ed04ff126c9bf
         with:
           typespec: candidates/shared-auth-interfaces-pr86/contracts/provider-identity-binding/main.tsp
           schema: candidates/shared-auth-interfaces-pr86/contracts/provider-identity-binding/authored.schema.json
