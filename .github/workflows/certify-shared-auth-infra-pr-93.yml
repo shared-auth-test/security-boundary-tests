@@ -51,6 +51,16 @@ jobs:
           node --check candidates/shared-auth-infra-pr93/workers/auth-policy/index.mjs
           node --check candidates/shared-auth-infra-pr93/workers/auth-edge/src/index.mjs
 
+      - name: Type-check the exact declaration surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --no-save --ignore-scripts --no-audit --no-fund typescript@7.0.2
+          npx tsc --noEmit --strict --skipLibCheck false \
+            --module nodenext --moduleResolution nodenext \
+            --target es2022 --lib es2022,dom \
+            candidates/shared-auth-infra-pr93/workers/auth-policy/index.d.ts
+
       - name: Run proof-policy and Okla-Quaestor contract tests
         shell: bash
         working-directory: candidates/shared-auth-infra-pr93/workers/auth-policy
