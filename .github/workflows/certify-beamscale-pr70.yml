@@ -29,11 +29,11 @@ jobs:
         run: |
           set -euo pipefail
           root=cert/beamscale-pr70
-          test "$(tr -d '\n' < "$root/SOURCE_SHA")" = "2dafebde1ac77f20c61f00d22b32fb3ff6c9a408"
+          test "$(tr -d '\n' < "$root/SOURCE_SHA")" = "12532ca84a4790be8b421748d4b1c623c0e71ebe"
           test "$(git hash-object "$root/deploy/baremetal/README.md")" = "cfbc4f81a2996c0d402a5161dc5a3a51be75ef20"
           test "$(git hash-object "$root/deploy/baremetal/nixos/bmscl-lifecycle-agent.nix")" = "b683ff026d7ccba83197cf91378130c1e5e02020"
           test "$(git hash-object "$root/deploy/baremetal/process-lifecycle.md")" = "3e4d9b55c637eb30e99f6baf8a55c41abe4ff0c6"
-          test "$(git hash-object "$root/scripts/check-lifecycle-agent-contract.mjs")" = "af7ca56c9a25fcc393f87b0a3638b5faabef9b50"
+          test "$(git hash-object "$root/scripts/check-lifecycle-agent-contract.mjs")" = "8c7e997a0bfd24d444e07d975cc0a9a688b2ca09"
 
       - name: Parse NixOS lifecycle module
         run: nix-instantiate --parse cert/beamscale-pr70/deploy/baremetal/nixos/bmscl-lifecycle-agent.nix >/dev/null
