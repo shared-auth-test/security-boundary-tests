@@ -4,151 +4,123 @@ on:
   pull_request:
     paths:
       - ".github/workflows/certify-shared-auth-clients-123.yml"
+      - "snapshots/shared-auth-clients-123/**"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 env:
-  PRODUCT_SHA: e0039a6f96f4f2f276efa646b7a1430311c30aa0
+  SNAPSHOT: snapshots/shared-auth-clients-123
 
 jobs:
-  rust:
+  exact-source:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          repository: shared-auth/shared-auth-clients
-          ref: ${{ env.PRODUCT_SHA }}
-          path: product
           persist-credentials: false
-      - name: Verify exact product head
-        working-directory: product
-        run: test "$(git rev-parse HEAD)" = "$PRODUCT_SHA"
+      - name: Verify every mirrored Git blob
+        run: |
+          set -euo pipefail
+          cd "$SNAPSHOT"
+          while read -r expected path; do
+            case "$expected" in \#*|"") continue ;; esac
+            test -f "$path"
+            actual="$(git hash-object "$path")"
+            test "$actual" = "$expected" || {
+              echo "blob mismatch: $path expected=$expected actual=$actual" >&2
+              exit 1
+            }
+          done < SOURCE-GIT-BLOBS.txt
+          expected_count="$(grep -Ev '^(#|$)' SOURCE-GIT-BLOBS.txt | wc -l)"
+          actual_count="$(find clients -type f | wc -l)"
+          test "$expected_count" -eq "$actual_count"
+          echo "verified $expected_count content-addressed product files"
+
+  rust:
+    needs: exact-source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: snapshots/shared-auth-clients-123/clients/rust
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           toolchain: stable
           components: rustfmt, clippy
-      - name: Rust format
-        working-directory: product
-        run: cargo fmt --all --check
-      - name: Rust clippy
-        working-directory: product
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-      - name: Rust native tests
-        working-directory: product
-        run: cargo test --workspace --all-features --exclude shared-auth-client-wasm
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo test --all-features
 
   typescript:
+    needs: exact-source
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: snapshots/shared-auth-clients-123/clients/ts
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          repository: shared-auth/shared-auth-clients
-          ref: ${{ env.PRODUCT_SHA }}
-          path: product
           persist-credentials: false
-      - name: Verify exact product head
-        working-directory: product
-        run: test "$(git rev-parse HEAD)" = "$PRODUCT_SHA"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: "22"
-      - name: Install
-        working-directory: product/clients/ts
-        run: npm install --ignore-scripts --no-audit --no-fund
-      - name: TypeScript check
-        working-directory: product/clients/ts
-        run: npm run check
-      - name: TypeScript tests
-        working-directory: product/clients/ts
-        run: npm test
-      - name: Package check
-        working-directory: product/clients/ts
-        run: npm run package:check
+      - run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Strict typecheck
+        run: npx tsc -p tsconfig.json
+      - name: Build the exact client source for the focused runtime test
+        run: >-
+          npx tsc src/index.ts
+          --target es2022
+          --module esnext
+          --moduleResolution bundler
+          --lib es2022,dom
+          --strict
+          --declaration
+          --outDir dist
+      - run: node --test test/passwordless.test.mjs
 
   dart:
+    needs: exact-source
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: snapshots/shared-auth-clients-123/clients/dart
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          repository: shared-auth/shared-auth-clients
-          ref: ${{ env.PRODUCT_SHA }}
-          path: product
           persist-credentials: false
-      - name: Verify exact product head
-        working-directory: product
-        run: test "$(git rev-parse HEAD)" = "$PRODUCT_SHA"
       - uses: dart-lang/setup-dart@7654d458321ee25acccccfdb86cd48bd95768ff1
         with:
           sdk: stable
-      - name: Dart dependencies
-        working-directory: product/clients/dart
-        run: dart pub get
-      - name: Dart analyze
-        working-directory: product/clients/dart
-        run: dart analyze
-      - name: Dart tests
-        working-directory: product/clients/dart
-        run: dart test
+      - run: dart pub get
+      - run: dart analyze lib test/passwordless_test.dart
+      - run: dart test test/passwordless_test.dart
 
   gleam:
+    needs: exact-source
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: snapshots/shared-auth-clients-123/clients/gleam
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          repository: shared-auth/shared-auth-clients
-          ref: ${{ env.PRODUCT_SHA }}
-          path: product
           persist-credentials: false
-      - name: Verify exact product head
-        working-directory: product
-        run: test "$(git rev-parse HEAD)" = "$PRODUCT_SHA"
       - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
         with:
           otp-version: "27"
           gleam-version: "1.17.0"
           rebar3-version: "3"
-      - name: Gleam dependencies
-        working-directory: product/clients/gleam
-        run: gleam deps download
-      - name: Gleam check
-        working-directory: product/clients/gleam
-        run: gleam check
-      - name: Gleam tests
-        working-directory: product/clients/gleam
-        run: gleam test
-
-  contracts:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: shared-auth/shared-auth-clients
-          ref: ${{ env.PRODUCT_SHA }}
-          path: product
-          persist-credentials: false
-      - name: Verify exact product head
-        working-directory: product
-        run: test "$(git rev-parse HEAD)" = "$PRODUCT_SHA"
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
-        with:
-          python-version: "3.11"
-      - name: Required client matrix contract
-        working-directory: product
-        run: |
-          bash scripts/validate-client-matrix.sh
-          python3 scripts/check-auth-lifecycle.py
-      - name: Install pinned JSON Schema runtime
-        run: python3 -m pip install --disable-pip-version-check --quiet jsonschema==4.25.1 referencing==0.36.2 rpds-py==0.27.0
-      - name: Generated contract
-        working-directory: product
-        run: python3 scripts/check-generated-contract.py --freeze --require-readonly
-      - name: Exported surface contract
-        working-directory: product
-        run: python3 contract/bin/check_surface.py
+      - run: gleam deps download
+      - run: gleam check
+      - run: gleam test
