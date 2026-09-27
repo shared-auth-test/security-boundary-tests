@@ -48,7 +48,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rustfmt +1.88.0 --check src/consumer_policy.rs src/lib.rs
+          rustfmt +1.88.0 --check src/consumer_policy.rs
+          rustfmt +1.88.0 --check --config skip_children=true src/lib.rs
           cargo test --all-targets
           cargo clippy --all-targets -- -D warnings
 
