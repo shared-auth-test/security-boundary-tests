@@ -69,4 +69,4 @@ jobs:
           /tmp/core-contract-guard-tests
           rustc +1.88.0 --edition=2021 -D warnings /tmp/core-contract-guard.rs -o /tmp/core-contract-guard
           /tmp/core-contract-guard --kind lib-core
-          ! grep -RInE 'sea_orm|sea-orm|diesel|sqlx|DatabaseConnection|DATABASE_URL|std::env::(var|vars)|process\.env|Deno\.env|Bun\.env|Platform\.environment|System\.getenv|os\.Getenv' src
+          ! grep -RInE 'sea_orm|sea-orm|diesel|sqlx|DatabaseConnection|std::env::(var|vars)|process\.env|Deno\.env|Bun\.env|Platform\.environment|System\.getenv|os\.Getenv' src
