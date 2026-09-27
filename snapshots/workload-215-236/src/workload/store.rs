@@ -14,9 +14,7 @@ use crate::db::DbStore;
 use crate::error::AuthError;
 use crate::oauth_as::{scope_is_wellformed, MAX_SCOPE_ENTRIES, MAX_SCOPE_LEN};
 
-use super::{
-    WorkloadClientBinding, WorkloadPrincipal, WorkloadSessionSnapshot, WorkloadStatus,
-};
+use super::{WorkloadClientBinding, WorkloadPrincipal, WorkloadSessionSnapshot, WorkloadStatus};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResolvedWorkloadBinding {
@@ -32,9 +30,9 @@ pub struct WorkloadStore {
 
 impl WorkloadStore {
     pub fn new(db: &DbStore) -> Self {
-        return Self {
+        Self {
             db: db.connection(),
-        };
+        }
     }
 
     /// Resolve one active confidential OAuth client to one active workload
@@ -85,9 +83,7 @@ impl WorkloadStore {
         let service_status: String = row.try_get("", "service_status").map_err(db_error)?;
         let binding_status: String = row.try_get("", "binding_status").map_err(db_error)?;
         let application_id: Uuid = row.try_get("", "application_id").map_err(db_error)?;
-        let service_account_id: Uuid = row
-            .try_get("", "service_account_id")
-            .map_err(db_error)?;
+        let service_account_id: Uuid = row.try_get("", "service_account_id").map_err(db_error)?;
 
         let principal = WorkloadPrincipal {
             service_account_id,
@@ -109,21 +105,18 @@ impl WorkloadStore {
                     .map_err(db_error)?,
                 true,
             )?,
-            default_scopes: scope_list(
-                row.try_get("", "default_scopes").map_err(db_error)?,
-                true,
-            )?,
+            default_scopes: scope_list(row.try_get("", "default_scopes").map_err(db_error)?, true)?,
         };
         let oauth_client_allowed_scopes = scope_list(
             row.try_get("", "oauth_allowed_scopes").map_err(db_error)?,
             false,
         )?;
 
-        return Ok(Some(ResolvedWorkloadBinding {
+        Ok(Some(ResolvedWorkloadBinding {
             principal,
             binding,
             oauth_client_allowed_scopes,
-        }));
+        }))
     }
 
     /// Insert the revocation anchor for a freshly minted workload token.
@@ -208,16 +201,13 @@ impl WorkloadStore {
             return Ok(None);
         };
 
-        let expires_at: DateTime<FixedOffset> =
-            row.try_get("", "expires_at").map_err(db_error)?;
+        let expires_at: DateTime<FixedOffset> = row.try_get("", "expires_at").map_err(db_error)?;
         let revoked_at: Option<DateTime<FixedOffset>> =
             row.try_get("", "revoked_at").map_err(db_error)?;
 
-        return Ok(Some(WorkloadSessionSnapshot {
+        Ok(Some(WorkloadSessionSnapshot {
             session_id: row.try_get("", "session_id").map_err(db_error)?,
-            service_account_id: row
-                .try_get("", "service_account_id")
-                .map_err(db_error)?,
+            service_account_id: row.try_get("", "service_account_id").map_err(db_error)?,
             client_id: row.try_get("", "client_id").map_err(db_error)?,
             application_id: resolved.principal.application_id,
             service_account_auth_epoch: nonnegative_epoch(
@@ -229,9 +219,10 @@ impl WorkloadStore {
             )?,
             audience: row.try_get("", "audience").map_err(db_error)?,
             scopes: scope_list(row.try_get("", "scopes").map_err(db_error)?, true)?,
-            expires_at_unix: u64::try_from(expires_at.timestamp()).map_err(|_| AuthError::Internal)?,
+            expires_at_unix: u64::try_from(expires_at.timestamp())
+                .map_err(|_| AuthError::Internal)?,
             revoked: revoked_at.is_some(),
-        }));
+        }))
     }
 
     /// Re-evaluate a workload session against the current principal, binding,
@@ -282,16 +273,13 @@ impl WorkloadStore {
             return Ok(None);
         };
 
-        let expires_at: DateTime<FixedOffset> =
-            row.try_get("", "expires_at").map_err(db_error)?;
+        let expires_at: DateTime<FixedOffset> = row.try_get("", "expires_at").map_err(db_error)?;
         let revoked_at: Option<DateTime<FixedOffset>> =
             row.try_get("", "revoked_at").map_err(db_error)?;
 
-        return Ok(Some(WorkloadSessionSnapshot {
+        Ok(Some(WorkloadSessionSnapshot {
             session_id: row.try_get("", "session_id").map_err(db_error)?,
-            service_account_id: row
-                .try_get("", "service_account_id")
-                .map_err(db_error)?,
+            service_account_id: row.try_get("", "service_account_id").map_err(db_error)?,
             client_id: row.try_get("", "client_id").map_err(db_error)?,
             application_id: row.try_get("", "application_id").map_err(db_error)?,
             service_account_auth_epoch: nonnegative_epoch(
@@ -303,9 +291,10 @@ impl WorkloadStore {
             )?,
             audience: row.try_get("", "audience").map_err(db_error)?,
             scopes: scope_list(row.try_get("", "scopes").map_err(db_error)?, true)?,
-            expires_at_unix: u64::try_from(expires_at.timestamp()).map_err(|_| AuthError::Internal)?,
+            expires_at_unix: u64::try_from(expires_at.timestamp())
+                .map_err(|_| AuthError::Internal)?,
             revoked: revoked_at.is_some(),
-        }));
+        }))
     }
 
     /// Idempotently revoke one workload session owned by one client.
@@ -324,7 +313,7 @@ impl WorkloadStore {
             ))
             .await
             .map_err(db_error)?;
-        return Ok(result.rows_affected() > 0);
+        Ok(result.rows_affected() > 0)
     }
 }
 
@@ -333,25 +322,25 @@ pub fn expiry_from_now(ttl_secs: i64) -> Result<DateTime<FixedOffset>, AuthError
         return Err(AuthError::Internal);
     }
 
-    return Ok(Utc::now().fixed_offset() + chrono::TimeDelta::seconds(ttl_secs));
+    Ok(Utc::now().fixed_offset() + chrono::TimeDelta::seconds(ttl_secs))
 }
 
 fn parse_status(value: &str) -> Result<WorkloadStatus, AuthError> {
-    return match value {
+    match value {
         "active" => Ok(WorkloadStatus::Active),
         "disabled" => Ok(WorkloadStatus::Disabled),
         _ => {
             tracing::error!("stored workload status violates the status grammar");
             Err(AuthError::Internal)
         }
-    };
+    }
 }
 
 fn nonnegative_epoch(value: i64) -> Result<u64, AuthError> {
-    return u64::try_from(value).map_err(|_| {
+    u64::try_from(value).map_err(|_| {
         tracing::error!("stored workload epoch is negative");
         AuthError::Internal
-    });
+    })
 }
 
 fn scope_list(
@@ -394,16 +383,16 @@ fn scope_list(
     }
 
     scopes.sort_unstable();
-    return Ok(scopes);
+    Ok(scopes)
 }
 
 fn statement(sql: &str, values: Vec<sea_orm::Value>) -> Statement {
-    return Statement::from_sql_and_values(DbBackend::Postgres, sql, values);
+    Statement::from_sql_and_values(DbBackend::Postgres, sql, values)
 }
 
 fn db_error<E>(_error: E) -> AuthError {
     tracing::error!("shared-auth workload store operation failed");
-    return AuthError::Upstream;
+    AuthError::Upstream
 }
 
 #[cfg(test)]
