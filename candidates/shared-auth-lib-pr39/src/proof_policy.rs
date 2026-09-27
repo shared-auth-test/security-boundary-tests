@@ -198,17 +198,13 @@ pub fn arbitrate(
             proof.shared_user_id != first.shared_user_id
                 || proof.identity.realm != first.identity.realm
         }) {
-            return ArbitrationDecision::Rejected(
-                RejectionReason::CanonicalIdentityConflict,
-            );
+            return ArbitrationDecision::Rejected(RejectionReason::CanonicalIdentityConflict);
         }
         if verified
             .iter()
             .any(|proof| proof.policy_revision != first.policy_revision)
         {
-            return ArbitrationDecision::Rejected(
-                RejectionReason::PolicyRevisionConflict,
-            );
+            return ArbitrationDecision::Rejected(RejectionReason::PolicyRevisionConflict);
         }
     }
 
@@ -257,9 +253,7 @@ fn optimistic(
             .iter()
             .any(|proof| proof.assurance < policy.minimum_assurance)
         {
-            return ArbitrationDecision::Rejected(
-                RejectionReason::InsufficientAssurance,
-            );
+            return ArbitrationDecision::Rejected(RejectionReason::InsufficientAssurance);
         }
         if verified
             .iter()
@@ -320,9 +314,7 @@ fn strict_pair(
                 return degraded(&required, by_provider);
             }
             _ => {
-                return ArbitrationDecision::Rejected(
-                    RejectionReason::ProviderConflict,
-                );
+                return ArbitrationDecision::Rejected(RejectionReason::ProviderConflict);
             }
         }
     }
@@ -337,14 +329,10 @@ fn strict_pair(
         .iter()
         .any(|proof| proof.assurance < policy.minimum_assurance)
     {
-        return ArbitrationDecision::Rejected(
-            RejectionReason::InsufficientAssurance,
-        );
+        return ArbitrationDecision::Rejected(RejectionReason::InsufficientAssurance);
     }
     if selected[0].root_proof_id == selected[1].root_proof_id {
-        return ArbitrationDecision::Rejected(
-            RejectionReason::NonIndependentProofs,
-        );
+        return ArbitrationDecision::Rejected(RejectionReason::NonIndependentProofs);
     }
 
     ArbitrationDecision::Accepted(accepted_identity(&selected))
@@ -363,9 +351,7 @@ fn explicit_class(
             return degraded(&required, by_provider);
         }
         _ => {
-            return ArbitrationDecision::Rejected(
-                RejectionReason::ProviderConflict,
-            );
+            return ArbitrationDecision::Rejected(RejectionReason::ProviderConflict);
         }
     };
 
@@ -373,9 +359,7 @@ fn explicit_class(
         return ArbitrationDecision::Rejected(RejectionReason::WrongProofClass);
     }
     if proof.assurance < minimum_assurance {
-        return ArbitrationDecision::Rejected(
-            RejectionReason::InsufficientAssurance,
-        );
+        return ArbitrationDecision::Rejected(RejectionReason::InsufficientAssurance);
     }
 
     ArbitrationDecision::Accepted(accepted_identity(&[proof]))
@@ -417,11 +401,7 @@ fn degraded(
 mod tests {
     use super::*;
 
-    fn proof(
-        provider: ProviderKind,
-        root: &str,
-        class: ProofClass,
-    ) -> ProviderVerdict {
+    fn proof(provider: ProviderKind, root: &str, class: ProofClass) -> ProviderVerdict {
         ProviderVerdict::Verified(VerifiedProof {
             identity: ProviderIdentityKey {
                 provider,
@@ -460,10 +440,7 @@ mod tests {
         );
         let expected = arbitrate(&strict_pair_policy(), &[a.clone(), b.clone()], 100);
         assert!(matches!(expected, ArbitrationDecision::Accepted(_)));
-        assert_eq!(
-            expected,
-            arbitrate(&strict_pair_policy(), &[b, a], 100)
-        );
+        assert_eq!(expected, arbitrate(&strict_pair_policy(), &[b, a], 100));
     }
 
     #[test]
@@ -476,8 +453,7 @@ mod tests {
         let revoked = ProviderVerdict::Revoked {
             provider: ProviderKind::NeonAuth,
         };
-        let expected =
-            ArbitrationDecision::Rejected(RejectionReason::RevokedProof);
+        let expected = ArbitrationDecision::Rejected(RejectionReason::RevokedProof);
         assert_eq!(
             arbitrate(
                 &strict_pair_policy(),
@@ -514,9 +490,7 @@ mod tests {
                 &[left, ProviderVerdict::Verified(right)],
                 100,
             ),
-            ArbitrationDecision::Rejected(
-                RejectionReason::CanonicalIdentityConflict,
-            )
+            ArbitrationDecision::Rejected(RejectionReason::CanonicalIdentityConflict,)
         );
     }
 
@@ -534,19 +508,16 @@ mod tests {
         );
         assert_eq!(
             arbitrate(&strict_pair_policy(), &[a, b], 100),
-            ArbitrationDecision::Rejected(
-                RejectionReason::NonIndependentProofs,
-            )
+            ArbitrationDecision::Rejected(RejectionReason::NonIndependentProofs,)
         );
     }
 
     #[test]
     fn identity_agreement_cannot_substitute_for_subsystem_grant() {
-        let policy =
-            ProofPolicy::StrictSubsystemGrant(StrictSubsystemGrantPolicy {
-                required_provider: ProviderKind::SharedAuth,
-                minimum_assurance: 2,
-            });
+        let policy = ProofPolicy::StrictSubsystemGrant(StrictSubsystemGrantPolicy {
+            required_provider: ProviderKind::SharedAuth,
+            minimum_assurance: 2,
+        });
         let ordinary = proof(
             ProviderKind::SharedAuth,
             "root-shared",
@@ -560,12 +531,10 @@ mod tests {
 
     #[test]
     fn privileged_admin_requires_explicit_admin_class() {
-        let policy = ProofPolicy::PrivilegedAdministration(
-            PrivilegedAdministrationPolicy {
-                required_provider: ProviderKind::SharedAuth,
-                minimum_assurance: 2,
-            },
-        );
+        let policy = ProofPolicy::PrivilegedAdministration(PrivilegedAdministrationPolicy {
+            required_provider: ProviderKind::SharedAuth,
+            minimum_assurance: 2,
+        });
         let ordinary = proof(
             ProviderKind::SharedAuth,
             "root-shared",
@@ -589,16 +558,11 @@ mod tests {
 
     #[test]
     fn optimistic_customer_session_is_bounded_and_pending() {
-        let policy = ProofPolicy::OptimisticCustomer(
-            OptimisticCustomerPolicy {
-                required_providers: BTreeSet::from([
-                    ProviderKind::Supabase,
-                    ProviderKind::NeonAuth,
-                ]),
-                max_pending_seconds: 30,
-                minimum_assurance: 1,
-            },
-        );
+        let policy = ProofPolicy::OptimisticCustomer(OptimisticCustomerPolicy {
+            required_providers: BTreeSet::from([ProviderKind::Supabase, ProviderKind::NeonAuth]),
+            max_pending_seconds: 30,
+            minimum_assurance: 1,
+        });
         let valid = proof(
             ProviderKind::Supabase,
             "root-a",
@@ -614,10 +578,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(reconcile_by_unix_seconds, 130);
-                assert_eq!(
-                    pending_providers,
-                    BTreeSet::from([ProviderKind::NeonAuth])
-                );
+                assert_eq!(pending_providers, BTreeSet::from([ProviderKind::NeonAuth]));
             }
             other => panic!("expected provisional decision, got {other:?}"),
         }
@@ -636,9 +597,7 @@ mod tests {
         assert_eq!(
             arbitrate(&strict_pair_policy(), &[valid, unavailable], 100),
             ArbitrationDecision::Degraded {
-                unavailable_providers: BTreeSet::from([
-                    ProviderKind::NeonAuth,
-                ])
+                unavailable_providers: BTreeSet::from([ProviderKind::NeonAuth,])
             }
         );
     }
