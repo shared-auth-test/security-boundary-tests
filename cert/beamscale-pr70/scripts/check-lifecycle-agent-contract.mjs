@@ -54,6 +54,9 @@ for (const required of [
 assert.ok(!docs.includes("process-lifecycle/beamscale/"));
 assert.ok(!docs.includes("ores-otel/ores-otel-sidecar.rs"));
 assert.ok(readme.includes("freeze agent receives no checkpoint/ptrace/mount/kernel"));
-assert.ok(readme.includes("fixed `beamscale-workloads.slice` cgroup subtree"));
+assert.match(
+  readme,
+  /fixed `beamscale-workloads\.slice` cgroup\s+subtree/,
+);
 
 console.log("BeamScale lifecycle agent contract: hardened freeze/thaw boundary ok");
