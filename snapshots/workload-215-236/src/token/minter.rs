@@ -255,6 +255,11 @@ impl TokenMinter {
         }
 
         let now = now_secs();
+        if self.ttl_secs == 0
+            || context.session.expires_at_unix > now.saturating_add(self.ttl_secs)
+        {
+            return Err(AuthError::Forbidden);
+        }
         let jti = uuid::Uuid::new_v4().to_string();
         let claims = build_workload_claims(WorkloadTokenContext {
             principal: context.principal,
@@ -798,6 +803,26 @@ mod tests {
         binding.audience = "oresoftware".to_string();
         let mut session = workload_session();
         session.audience = binding.audience.clone();
+        let allowed = vec!["build:read".to_string(), "build:write".to_string()];
+
+        assert!(matches!(
+            m.mint_workload(WorkloadMintContext {
+                principal: &principal,
+                binding: &binding,
+                session: &session,
+                oauth_client_allowed_scopes: &allowed,
+            }),
+            Err(AuthError::Forbidden)
+        ));
+    }
+
+    #[test]
+    fn workload_minter_refuses_session_expiry_beyond_configured_ttl() {
+        let m = minter();
+        let principal = workload_principal();
+        let binding = workload_binding();
+        let mut session = workload_session();
+        session.expires_at_unix = u64::MAX;
         let allowed = vec!["build:read".to_string(), "build:write".to_string()];
 
         assert!(matches!(
