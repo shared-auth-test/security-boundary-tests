@@ -1,0 +1,11 @@
+[package]
+name = "shared-auth-interfaces"
+version = "0.1.0"
+edition = "2021"
+description = "Shared contract types for the shared-auth system (see ../../SPEC.md)."
+license = "UNLICENSED"
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

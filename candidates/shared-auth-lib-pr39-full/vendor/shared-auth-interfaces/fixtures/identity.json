@@ -1,0 +1,15 @@
+{
+  "shared_user_id": "0f8c2a1e-1111-4b7a-9c3d-000000000001",
+  "provider": "supabase",
+  "provider_tenant": "fiducia-cloud",
+  "provider_subject": "9a7b6c5d-2222-4e8f-8a1b-000000000002",
+  "project": "fiducia-cloud",
+  "supabase_user_id": "9a7b6c5d-2222-4e8f-8a1b-000000000002",
+  "session_id": "1f8c2a1e-1111-4b7a-9c3d-000000000003",
+  "email": "user@example.com",
+  "email_verified": true,
+  "roles": ["user"],
+  "amr": ["federated"],
+  "acr": "urn:oresoftware:loa:1",
+  "authority": "shared-auth"
+}

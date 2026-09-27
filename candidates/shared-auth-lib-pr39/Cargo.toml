@@ -1,0 +1,8 @@
+[package]
+name = "shared-auth-lib-pr39-cert"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
