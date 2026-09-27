@@ -693,8 +693,13 @@ impl SharedAuthClient {
         &self,
         access_token: &str,
     ) -> Result<serde_json::Value, ClientError> {
-        self.authed_json(Method::GET, &["scim", "v2", "Users"], access_token, None::<&()>)
-            .await
+        self.authed_json(
+            Method::GET,
+            &["scim", "v2", "Users"],
+            access_token,
+            None::<&()>,
+        )
+        .await
     }
 
     pub async fn scim_create_user(
@@ -702,8 +707,13 @@ impl SharedAuthClient {
         access_token: &str,
         user: &serde_json::Value,
     ) -> Result<serde_json::Value, ClientError> {
-        self.authed_json(Method::POST, &["scim", "v2", "Users"], access_token, Some(user))
-            .await
+        self.authed_json(
+            Method::POST,
+            &["scim", "v2", "Users"],
+            access_token,
+            Some(user),
+        )
+        .await
     }
 
     pub async fn scim_get_user(
@@ -712,8 +722,13 @@ impl SharedAuthClient {
         id: &str,
     ) -> Result<serde_json::Value, ClientError> {
         let id = required_field(id, "id")?;
-        self.authed_json(Method::GET, &["scim", "v2", "Users", id], access_token, None::<&()>)
-            .await
+        self.authed_json(
+            Method::GET,
+            &["scim", "v2", "Users", id],
+            access_token,
+            None::<&()>,
+        )
+        .await
     }
 
     pub async fn scim_replace_user(
@@ -723,8 +738,13 @@ impl SharedAuthClient {
         user: &serde_json::Value,
     ) -> Result<serde_json::Value, ClientError> {
         let id = required_field(id, "id")?;
-        self.authed_json(Method::PUT, &["scim", "v2", "Users", id], access_token, Some(user))
-            .await
+        self.authed_json(
+            Method::PUT,
+            &["scim", "v2", "Users", id],
+            access_token,
+            Some(user),
+        )
+        .await
     }
 
     pub async fn scim_patch_user(
@@ -734,8 +754,13 @@ impl SharedAuthClient {
         patch: &serde_json::Value,
     ) -> Result<serde_json::Value, ClientError> {
         let id = required_field(id, "id")?;
-        self.authed_json(Method::PATCH, &["scim", "v2", "Users", id], access_token, Some(patch))
-            .await
+        self.authed_json(
+            Method::PATCH,
+            &["scim", "v2", "Users", id],
+            access_token,
+            Some(patch),
+        )
+        .await
     }
 
     pub async fn scim_delete_user(&self, access_token: &str, id: &str) -> Result<(), ClientError> {
@@ -749,8 +774,13 @@ impl SharedAuthClient {
         &self,
         access_token: &str,
     ) -> Result<serde_json::Value, ClientError> {
-        self.authed_json(Method::GET, &["scim", "v2", "Groups"], access_token, None::<&()>)
-            .await
+        self.authed_json(
+            Method::GET,
+            &["scim", "v2", "Groups"],
+            access_token,
+            None::<&()>,
+        )
+        .await
     }
 
     pub async fn scim_create_group(
@@ -758,8 +788,13 @@ impl SharedAuthClient {
         access_token: &str,
         group: &serde_json::Value,
     ) -> Result<serde_json::Value, ClientError> {
-        self.authed_json(Method::POST, &["scim", "v2", "Groups"], access_token, Some(group))
-            .await
+        self.authed_json(
+            Method::POST,
+            &["scim", "v2", "Groups"],
+            access_token,
+            Some(group),
+        )
+        .await
     }
 
     pub async fn scim_get_group(
@@ -768,8 +803,13 @@ impl SharedAuthClient {
         id: &str,
     ) -> Result<serde_json::Value, ClientError> {
         let id = required_field(id, "id")?;
-        self.authed_json(Method::GET, &["scim", "v2", "Groups", id], access_token, None::<&()>)
-            .await
+        self.authed_json(
+            Method::GET,
+            &["scim", "v2", "Groups", id],
+            access_token,
+            None::<&()>,
+        )
+        .await
     }
 
     pub async fn scim_replace_group(
@@ -779,8 +819,13 @@ impl SharedAuthClient {
         group: &serde_json::Value,
     ) -> Result<serde_json::Value, ClientError> {
         let id = required_field(id, "id")?;
-        self.authed_json(Method::PUT, &["scim", "v2", "Groups", id], access_token, Some(group))
-            .await
+        self.authed_json(
+            Method::PUT,
+            &["scim", "v2", "Groups", id],
+            access_token,
+            Some(group),
+        )
+        .await
     }
 
     pub async fn scim_patch_group(
@@ -790,8 +835,13 @@ impl SharedAuthClient {
         patch: &serde_json::Value,
     ) -> Result<serde_json::Value, ClientError> {
         let id = required_field(id, "id")?;
-        self.authed_json(Method::PATCH, &["scim", "v2", "Groups", id], access_token, Some(patch))
-            .await
+        self.authed_json(
+            Method::PATCH,
+            &["scim", "v2", "Groups", id],
+            access_token,
+            Some(patch),
+        )
+        .await
     }
 
     pub async fn scim_delete_group(&self, access_token: &str, id: &str) -> Result<(), ClientError> {
