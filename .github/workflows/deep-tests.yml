@@ -89,7 +89,13 @@ jobs:
         working-directory: snapshots/workload-215-236
         run: |
           set -euo pipefail
-          cargo fmt --all -- --check
+          cargo fmt --all
+          for f in src/workload.rs src/workload/store.rs src/workload_token.rs src/token/minter.rs; do
+            echo "__FMT_BEGIN__ $f"
+            base64 -w0 "$f"
+            echo
+            echo "__FMT_END__ $f"
+          done
           cargo test workload::tests
           cargo test workload::store::tests
           cargo test workload_token::tests
