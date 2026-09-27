@@ -1,0 +1,23 @@
+# Central Shared Auth policy. Consumer projects may shadow these values with
+# their own .shared-auth.toml after both files pass the same typed contract.
+schema_version = 1
+
+[compatibility]
+repository = "https://github.com/shared-auth/shared-auth-interfaces"
+commit = "f62d9dbed2db6774dda04586328e6c485423fff6"
+
+[factors.two_factor]
+required = true
+methods = ["totp", "passkey", "security-key", "backup-code"]
+
+[factors.three_factor]
+enabled = false
+methods = ["totp", "passkey", "security-key"]
+
+[pages]
+show = ["sign-in", "challenge", "recovery", "error", "signed-out"]
+
+[styling]
+theme = "system"
+brand_name = "Shared Auth"
+accent_color = "#4F46E5"
