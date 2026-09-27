@@ -1,5 +1,5 @@
 # Exact Rust package slice mirrored from shared-auth/shared-auth-lib.
-# product_head=26cc7835944213562ee00554fb89598487c675a2
+# product_head=4b0792a6685fa27188b4ed52d89c580d65015bb5
 # Format: <Git blob SHA>  <product-relative path>
 e93a19e8946b5d19cfd6930ecc36ee3aaf40d0ef  Cargo.lock
 fe3e480941c9906e39f4fba7afb325df76ccaf59  Cargo.toml
