@@ -19,3 +19,4 @@ fba7d081566abd09ff0c618f12542c9836a82826  langs/rust/src/session_guard.rs
 be2d49ab9c6f02805614129af4b5a785246dbe5e  langs/rust/tests/session_credential_adversarial.rs
 535f732bdffa739f8b71bded21fed319d712e30b  vendor/shared-auth-interfaces/rust/Cargo.toml
 9540645dcc1b13af306be14476816aa116b2693a  vendor/shared-auth-interfaces/rust/src/lib.rs
+01d8429abb9ae92d41f0e10a547f69808e319836  vendor/shared-auth-interfaces/fixtures/identity.json
