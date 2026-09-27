@@ -37,6 +37,11 @@ impl ResolvedSharedAuthConfig {
     /// This is an allow-list operation. A method being implemented by the
     /// runtime does not make it policy-admitted, and a three-factor method does
     /// not silently count as a two-factor method (or vice versa).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConsumerPolicyDenied`] when the requested page or factor is
+    /// not admitted by the resolved consumer policy.
     pub fn require_consumer_action(
         &self,
         action: ConsumerPolicyAction,
@@ -86,19 +91,20 @@ mod tests {
     const REVISION: &str = "0123456789abcdef0123456789abcdef01234567";
 
     #[test]
-    fn central_policy_admits_only_declared_pages() {
-        let policy = central_shared_auth_policy().expect("central policy must resolve");
+    fn central_policy_admits_only_declared_pages() -> Result<(), Box<dyn std::error::Error>> {
+        let policy = central_shared_auth_policy()?;
 
         assert!(
             policy.consumer_action_is_admitted(ConsumerPolicyAction::RenderPage(AuthPage::SignIn,))
         );
         assert!(!policy
             .consumer_action_is_admitted(ConsumerPolicyAction::RenderPage(AuthPage::SignUp,)));
+        Ok(())
     }
 
     #[test]
-    fn two_factor_methods_are_an_allow_list() {
-        let policy = central_shared_auth_policy().expect("central policy must resolve");
+    fn two_factor_methods_are_an_allow_list() -> Result<(), Box<dyn std::error::Error>> {
+        let policy = central_shared_auth_policy()?;
 
         assert!(policy
             .consumer_action_is_admitted(ConsumerPolicyAction::UseTwoFactor(FactorMethod::Totp,)));
@@ -117,21 +123,25 @@ mod tests {
                 FactorMethod::SmsOtp,
             ))
         );
+        Ok(())
     }
 
     #[test]
-    fn disabled_three_factor_policy_cannot_be_bypassed_by_a_listed_method() {
-        let policy = central_shared_auth_policy().expect("central policy must resolve");
+    fn disabled_three_factor_policy_cannot_be_bypassed_by_a_listed_method(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let policy = central_shared_auth_policy()?;
 
         assert_eq!(
             policy
                 .require_consumer_action(ConsumerPolicyAction::UseThreeFactor(FactorMethod::Totp,)),
             Err(ConsumerPolicyDenied::ThreeFactorDisabled),
         );
+        Ok(())
     }
 
     #[test]
-    fn consumer_overlay_changes_the_executable_admission_result() {
+    fn consumer_overlay_changes_the_executable_admission_result(
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let overlay = SharedAuthConfigOverlay {
             schema_version: 1,
             compatibility: Compatibility::Exact(ExactCompatibility {
@@ -150,9 +160,7 @@ mod tests {
             }),
             styling: None,
         };
-        let policy = overlay
-            .resolve(SharedAuthDefaults::default())
-            .expect("overlay must resolve");
+        let policy = overlay.resolve(SharedAuthDefaults::default())?;
 
         assert!(
             policy.consumer_action_is_admitted(ConsumerPolicyAction::RenderPage(AuthPage::SignUp,))
@@ -164,5 +172,6 @@ mod tests {
         );
         assert!(!policy
             .consumer_action_is_admitted(ConsumerPolicyAction::UseTwoFactor(FactorMethod::Totp,)));
+        Ok(())
     }
 }
