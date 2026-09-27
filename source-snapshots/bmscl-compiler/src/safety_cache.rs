@@ -3,11 +3,7 @@ use anyhow::{bail, Context, Result};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{
-    collections::BTreeSet,
-    fs,
-    path::Path,
-};
+use std::{collections::BTreeSet, fs, path::Path};
 
 pub const SAFETY_CACHE_FORMAT_V1: &str = "bmscl-safety-cache-v1";
 pub const SAFETY_ANALYZER_SCHEMA_V1: &str = "bmscl-static-safety-analyzer-v1";
@@ -212,15 +208,10 @@ fn normalize_and_validate_records(document: &mut SafetyCacheDocument) -> Result<
             );
         }
         dependency.outer_checksum = dependency.outer_checksum.to_ascii_uppercase();
-        validate_upper_sha256(
-            &dependency.outer_checksum,
-            "dependency outer_checksum",
-        )?;
+        validate_upper_sha256(&dependency.outer_checksum, "dependency outer_checksum")?;
         validate_lower_sha256(&dependency.source_sha256, "dependency source_sha256")?;
         if dependency.verdict != "safe" {
-            bail!(
-                "safety cache may contain only positive `safe` dependency verdicts"
-            );
+            bail!("safety cache may contain only positive `safe` dependency verdicts");
         }
     }
     document.dependencies.sort();
@@ -233,10 +224,18 @@ fn normalize_and_validate_records(document: &mut SafetyCacheDocument) -> Result<
     }
     document.sources.sort();
 
-    if document.dependencies.windows(2).any(|items| items[0] == items[1]) {
+    if document
+        .dependencies
+        .windows(2)
+        .any(|items| items[0] == items[1])
+    {
         bail!("safety cache contains duplicate dependency records");
     }
-    if document.sources.windows(2).any(|items| items[0] == items[1]) {
+    if document
+        .sources
+        .windows(2)
+        .any(|items| items[0] == items[1])
+    {
         bail!("safety cache contains duplicate source records");
     }
     Ok(())
@@ -265,7 +264,11 @@ fn canonical_payload(document: &SafetyCacheDocument) -> Vec<u8> {
         push_field(&mut payload, &source.source_sha256);
         push_field(
             &mut payload,
-            if source.deny_cpu_loops { "true" } else { "false" },
+            if source.deny_cpu_loops {
+                "true"
+            } else {
+                "false"
+            },
         );
         push_field(&mut payload, &source.verdict);
     }
@@ -341,8 +344,7 @@ fn decode_signature(value: &str) -> Result<Signature> {
 mod tests {
     use super::{
         canonical_payload, load_verified_safety_cache, policy_sha256, DependencySafetyRecord,
-        SafetyCacheDocument, SourceSafetyRecord, SAFETY_ANALYZER_SCHEMA_V1,
-        SAFETY_CACHE_FORMAT_V1,
+        SafetyCacheDocument, SourceSafetyRecord, SAFETY_ANALYZER_SCHEMA_V1, SAFETY_CACHE_FORMAT_V1,
     };
     use crate::model::Policy;
     use ed25519_dalek::{Signer, SigningKey};
@@ -406,18 +408,8 @@ mod tests {
         )
         .unwrap();
 
-        assert!(cache.approves_dependency(
-            "safe_dep",
-            "1.2.3",
-            "hex",
-            DEPENDENCY_CHECKSUM
-        ));
-        assert!(!cache.approves_dependency(
-            "safe_dep",
-            "1.2.4",
-            "hex",
-            DEPENDENCY_CHECKSUM
-        ));
+        assert!(cache.approves_dependency("safe_dep", "1.2.3", "hex", DEPENDENCY_CHECKSUM));
+        assert!(!cache.approves_dependency("safe_dep", "1.2.4", "hex", DEPENDENCY_CHECKSUM));
         assert!(cache.approves_source(source, false));
         assert!(!cache.approves_source(b"pub fn changed(x) { x }\n", false));
         assert!(!cache.approves_source(source, true));
@@ -457,14 +449,9 @@ mod tests {
         )
         .unwrap();
 
-        let report = crate::analyze::check_project_with_cache(
-            &project,
-            &policy,
-            None,
-            false,
-            Some(&cache),
-        )
-        .unwrap();
+        let report =
+            crate::analyze::check_project_with_cache(&project, &policy, None, false, Some(&cache))
+                .unwrap();
         assert!(report.admitted, "{:?}", report.findings);
         assert_eq!(
             report.safety_cache_sha256.as_deref(),
@@ -476,14 +463,9 @@ mod tests {
             "[[packages]]\nname = \"safe_dep\"\nversion = \"1.2.3\"\nsource = \"hex\"\nbuild_tools = [\"gleam\"]\nouter_checksum = \"DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD\"\n",
         )
         .unwrap();
-        let changed = crate::analyze::check_project_with_cache(
-            &project,
-            &policy,
-            None,
-            false,
-            Some(&cache),
-        )
-        .unwrap();
+        let changed =
+            crate::analyze::check_project_with_cache(&project, &policy, None, false, Some(&cache))
+                .unwrap();
         assert!(!changed.admitted);
         assert!(changed.findings.iter().any(|finding| {
             finding.code == "BMSCL_DEPENDENCY_CHECKSUM_NOT_APPROVED"
