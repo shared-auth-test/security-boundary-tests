@@ -1,0 +1,8 @@
+# Virtual workspace so `shared-auth-lib = { git = "https://github.com/shared-auth/shared-auth-lib.git", rev = "…" }`
+# consumers resolve the Rust crate from `langs/rust/` without a path override. Zed still
+# publishes language slices from `.zpkg.toml` `[targets.*]`.
+
+[workspace]
+resolver = "2"
+members = ["langs/rust"]
+default-members = ["langs/rust"]

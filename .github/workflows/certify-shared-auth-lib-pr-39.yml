@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'candidates/shared-auth-lib-pr39/**'
+      - 'candidates/shared-auth-lib-pr39-full/**'
       - '.github/workflows/certify-shared-auth-lib-pr-39.yml'
       - 'docs/shared-auth-lib-pr-39-certification.md'
   workflow_dispatch:
@@ -45,30 +46,27 @@ jobs:
           cargo test --manifest-path "$manifest"
 
 
+
   full-product-rust:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - name: Check out proof repository
+      - name: Check out exact mirrored candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           show-progress: false
 
-      - name: Check out exact Shared Auth lib head
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: shared-auth/shared-auth-lib
-          ref: 5b54aafb40ec8c833a95880ac112543c9b95fb69
-          path: product
-          persist-credentials: false
-          show-progress: false
-
-      - name: Verify exact product head
+      - name: Verify complete Rust package slice
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git -C product rev-parse HEAD)" = "5b54aafb40ec8c833a95880ac112543c9b95fb69"
+          root=candidates/shared-auth-lib-pr39-full
+          grep -Fx '# product_head=5b54aafb40ec8c833a95880ac112543c9b95fb69' "$root/SOURCE-GIT-BLOBS.txt"
+          grep -v '^#' "$root/SOURCE-GIT-BLOBS.txt" | while read -r expected path; do
+            [ -n "$expected" ] || continue
+            test "$(git hash-object "$root/$path")" = "$expected"
+          done
 
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
@@ -76,9 +74,9 @@ jobs:
           toolchain: stable
           components: rustfmt, clippy
 
-      - name: Run source-owned Rust gates
+      - name: Run source-owned locked Rust gates
         shell: bash
-        working-directory: product/langs/rust
+        working-directory: candidates/shared-auth-lib-pr39-full/langs/rust
         run: |
           set -euo pipefail
           rustc --version --verbose
