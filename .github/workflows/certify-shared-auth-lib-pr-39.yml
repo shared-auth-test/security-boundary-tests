@@ -32,8 +32,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git hash-object candidates/shared-auth-lib-pr39/src/proof_policy.rs)" = "990417a0216df954a6ee3ee9ab087bae85f6768c"
-          test "$(git hash-object candidates/shared-auth-lib-pr39/src/provider_adapter.rs)" = "64e509625d70e5818fe4b89d85a65a775d82d7f7"
+          test "$(git hash-object candidates/shared-auth-lib-pr39/src/proof_policy.rs)" = "6b3554781d0f63fc9da71d86ab051a65aedce7bd"
+          test "$(git hash-object candidates/shared-auth-lib-pr39/src/provider_adapter.rs)" = "867c986405c787ef0452cd61a5cf3f2e3bc6db25"
 
       - name: Format, lint, and test
         shell: bash
