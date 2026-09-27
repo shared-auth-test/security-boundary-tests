@@ -1,0 +1,29 @@
+[package]
+name = "bmscl-compiler"
+version = "0.1.0"
+edition = "2021"
+description = "Admission compiler and packager for safe BeamScale Gleam workers"
+license = "Apache-2.0"
+
+[[bin]]
+name = "bmscl-compiler"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+ed25519-dalek = "2"
+flate2 = "1"
+hex = "0.4"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tar = "0.4"
+tempfile = "3"
+toml = "0.8"
+tree-sitter = "0.25"
+tree-sitter-gleam = "1"
+walkdir = "2"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
