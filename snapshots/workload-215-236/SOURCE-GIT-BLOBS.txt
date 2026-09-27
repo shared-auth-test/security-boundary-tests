@@ -12,3 +12,4 @@ ec9ef60545730c2cea5ffa07958a10129e63dbe3 src/token/assurance.rs
 f08932da78d724c587779aa79c06b6f2370bcc9f src/token/jwks.rs
 de8da0a0ee61c9aaa97ec18877ba8477df1282c2 src/token/minter.rs
 696d315ee97287fde383c82363eeb867c69a7ac4 src/workload/store.rs
+b13ef6ba2fd610992ef04205f5d5fde3070b9b75 src/token/mod.rs
