@@ -43,6 +43,11 @@ jobs:
           test "$(git hash-object candidates/shared-auth-infra-pr93/workers/auth-policy/test/okla-quaestor.test.mjs)" = "3d9a14b44a3ccbbcb8ee3ba036ce9658f2fd7934"
           test "$(git hash-object candidates/shared-auth-infra-pr93/workers/auth-edge/src/index.mjs)" = "6900aa298b1169bc75d4b9fa560574204c9c2bfb"
           test "$(git hash-object candidates/shared-auth-infra-pr93/workers/auth-edge/test/index.test.mjs)" = "e7edfdfb32b2cd3a802288738bb5b450eaa7d662"
+          test "$(git hash-object candidates/shared-auth-infra-pr93/workers/auth-edge/package.json)" = "28d03dddf9619767b21c9c96169fb4dd8de94756"
+          test "$(git hash-object candidates/shared-auth-infra-pr93/workers/auth-edge/package-lock.json)" = "93a622342bc5956b993543dcef0514e894a4823d"
+          test "$(git hash-object candidates/shared-auth-infra-pr93/workers/auth-edge/wrangler.toml)" = "e2efee2fb108ca8a574ae71fa5e0bc6556c8dc70"
+          test "$(git hash-object candidates/shared-auth-infra-pr93/workers/auth-edge/src/canonical-plus.mjs)" = "b42b232d8206997dad6685d2a8ef1d56d6397bbc"
+          test "$(git hash-object candidates/shared-auth-infra-pr93/workers/auth-edge/test/canonical-plus.test.mjs)" = "2a1b7a5f96d4147624f238725c79e3bc1b9a0cea"
 
       - name: Syntax check exact implementation
         shell: bash
@@ -60,6 +65,16 @@ jobs:
             --module nodenext --moduleResolution nodenext \
             --target es2022 --lib es2022,dom \
             candidates/shared-auth-infra-pr93/workers/auth-policy/index.d.ts
+
+      - name: Reproduce source auth-edge package and Wrangler gate
+        shell: bash
+        working-directory: candidates/shared-auth-infra-pr93/workers/auth-edge
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run check
+          npm test
+          npx wrangler deploy --dry-run
 
       - name: Run proof-policy and Okla-Quaestor contract tests
         shell: bash
