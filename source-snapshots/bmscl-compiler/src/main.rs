@@ -219,8 +219,7 @@ fn verify_deployable_beam(beam_dir: &std::path::Path) -> Result<()> {
 fn load_safety_cache(policy: &crate::model::Policy) -> Result<Option<VerifiedSafetyCache>> {
     let path = env::var_os("BMSCL_SAFETY_CACHE").map(PathBuf::from);
     let public_key = env::var("BMSCL_SAFETY_CACHE_PUBLIC_KEY").ok();
-    let required_analysis_policy =
-        env::var("BMSCL_REQUIRED_SAFETY_ANALYSIS_SHA256").ok();
+    let required_analysis_policy = env::var("BMSCL_REQUIRED_SAFETY_ANALYSIS_SHA256").ok();
     let key_id = env::var("BMSCL_SAFETY_CACHE_KEY_ID").ok();
 
     match (path, public_key, required_analysis_policy) {
