@@ -1,9 +1,9 @@
 # Product: shared-auth/shared-auth-clients
-# Exact product head: ee16cbabd52c069013cf185c6c48c8557787f48d
+# Exact product head: 7ebb3eb6d57b729b313076e497aa045b6c303aec
 # Format: git-blob-sha path-relative-to-this-directory
 91335f6c94e1e713f590450051e1a0a4c47dec47 clients/rust/Cargo.toml
 828a1769da48ac075cab93a93c1522656dfb94d1 clients/rust/src/lib.rs
-415320d502b0767b3976e390534920ae3f509541 clients/rust/src/session.rs
+ae5651ad04c1f89f9d372b681057c1dc13b368b6 clients/rust/src/session.rs
 bf4cc707df57e7db2294da8ed7fcaf446025ca15 clients/ts/package.json
 0f1e0babfdf7dbb33dd6795daa74a8b7427cbd6a clients/ts/tsconfig.json
 f806b2ab16af4cbc451294961d031e81f1b6047a clients/ts/src/index.ts
