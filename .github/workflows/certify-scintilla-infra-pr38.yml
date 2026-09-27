@@ -38,6 +38,8 @@ jobs:
           test "$(git hash-object "$root/fleet/colmena-hive.nix")" = "c0521423f6d1c2286584f415aede9cdd5473e079"
           test "$(git hash-object "$root/infra/fleet/aws/main.tf")" = "7b994f74bdff68d87a4ad7c324602e7bc52511d0"
           test "$(git hash-object "$root/infra/fleet/gcp/main.tf")" = "474771ebcc393859c76598a30325d43b256dc2f1"
+          test "$(git hash-object "$root/infra/fleet/aws/variables.tf")" = "b1ae91911b9f4bac7c1e33b9930944212d31509b"
+          test "$(git hash-object "$root/infra/fleet/gcp/variables.tf")" = "8396e125b5413530bb86778fb6f9dc633360bcc5"
           test "$(git hash-object "$root/tests/fleet-contract.test.mjs")" = "9094891a674d94ad275811dd56950b12e11d67e3"
 
       - name: Parse NixOS lifecycle module
