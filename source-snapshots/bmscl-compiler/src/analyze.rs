@@ -482,9 +482,8 @@ fn check_dependency_manifest(
         let cache_hit = checksum_valid
             && source == "hex"
             && !version.is_empty()
-            && safety_cache.is_some_and(|cache| {
-                cache.approves_dependency(name, version, source, checksum)
-            });
+            && safety_cache
+                .is_some_and(|cache| cache.approves_dependency(name, version, source, checksum));
 
         if cache_hit {
             cache_approved_names.insert(name.to_owned());
