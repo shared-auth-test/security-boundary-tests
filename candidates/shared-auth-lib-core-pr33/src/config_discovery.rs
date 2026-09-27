@@ -203,20 +203,19 @@ fn read_selected(path: &Path) -> Result<String, SharedAuthDiscoveryError> {
 }
 
 fn warn_unless_repo_root(found: &DiscoveredSharedAuthConfig) {
-    if found.at_repository_root {
-        return;
-    }
-    #[cfg(feature = "ores-logging")]
-    {
-        let _ = discovery_logger()
-            .warn(vec![next_loggers::json!({
-                "event": "ores.config.not_at_repo_root",
-                "ores.config.file": found.path.file_name().and_then(|name| name.to_str()).unwrap_or(CANONICAL_CONFIG_FILE),
-                "ores.config.path": found.path.display().to_string(),
-                "ores.config.at_repo_root": false,
-                "detail": "Shared Auth configuration was selected without an adjacent .git directory; confirm this file is meant to govern the running service"
-            })])
-            .send();
+    if !found.at_repository_root {
+        #[cfg(feature = "ores-logging")]
+        {
+            let _ = discovery_logger()
+                .warn(vec![next_loggers::json!({
+                    "event": "ores.config.not_at_repo_root",
+                    "ores.config.file": found.path.file_name().and_then(|name| name.to_str()).unwrap_or(CANONICAL_CONFIG_FILE),
+                    "ores.config.path": found.path.display().to_string(),
+                    "ores.config.at_repo_root": false,
+                    "detail": "Shared Auth configuration was selected without an adjacent .git directory; confirm this file is meant to govern the running service"
+                })])
+                .send();
+        }
     }
 }
 
