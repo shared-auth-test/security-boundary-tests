@@ -1,0 +1,120 @@
+[package]
+name = "shared-auth-server"
+version = "0.1.0"
+edition = "2021"
+description = "Centralized OreSoftware auth server: verifies external access tokens, owns local sessions and MFA factors, mints unified OreSoftware JWTs, and serves a Maud/htmx status UI."
+license = "UNLICENSED"
+publish = false
+
+[features]
+# Deterministic authentication is an integration-test facility, not a runtime
+# switch in the production server. Production/default binaries do not compile
+# the route, its fixed code, or its Supabase-admin ceremony implementation.
+default = []
+test-auth-bypass = []
+
+[[bin]]
+name = "shared-auth-server"
+path = "src/main.rs"
+
+[dependencies]
+# --- HTTP + MASH (Maud / Axum / Supabase / SeaORM / htmx) ---
+axum = { version = "0.8", features = ["macros"] }
+axum-server = "=0.8.0"
+axum-extra = { version = "0.12", features = ["cookie"] }
+time = { version = "0.3", default-features = false }
+maud = "0.27"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+tower-http = { version = "0.7", features = ["cors", "limit", "set-header", "timeout", "trace"] }
+http = "1"
+
+# --- JWT: verify provider tokens + sign/verify our own (ES256) ---
+# v11 requires exactly one explicit crypto provider; AWS-LC avoids pulling the
+# unused RustCrypto RSA implementation covered by RUSTSEC-2023-0071.
+jsonwebtoken = { version = "11", features = ["aws_lc_rs"] }
+p256 = { version = "0.13", features = ["ecdsa", "jwk", "pem", "pkcs8"] }
+sha2 = "0.11"
+sha1 = "0.11"
+hmac = "0.13"
+argon2 = "0.6"
+base64 = "0.23"
+# Pure-Rust RFC 9580 detached-signature verification. OpenPGP remains a
+# provenance-only plane and is not wired into session/token issuance.
+pgp = { version = "0.20", default-features = false }
+rand = "0.10"
+
+# --- SAML HTTP-Redirect binding: raw DEFLATE for the AuthnRequest ---
+# Already present in Cargo.lock at 1.1.9 (pulled in by `pgp`), so this adds a
+# direct edge rather than a new crate. `flate2::write::DeflateEncoder` is the
+# bare RFC 1951 stream the binding requires, not the zlib-wrapped form.
+flate2 = "1"
+
+# --- SSH public-key auth: Ed25519 verification ---
+# Already in the tree as the crypto provider jsonwebtoken v11 requires. Taking a
+# direct dependency reuses that audited implementation instead of adding a
+# second Ed25519 stack; P-256 SSH signatures reuse the `p256` crate above.
+aws-lc-rs = "1.17"
+
+# --- MFA: encrypted TOTP seeds and WebAuthn/passkeys ---
+aes-gcm = "0.11"
+webauthn-rs = { version = "0.5.5", default-features = false, features = ["danger-allow-state-serialisation"] }
+url = "2"
+
+# --- Identity mirror in AWS RDS Postgres (SeaORM; schema owned by pg-defs) ---
+sea-orm = { version = "2.0", default-features = false, features = [
+    "runtime-tokio-rustls",
+    "sqlx-postgres",
+    "with-chrono",
+    "with-json",
+    "with-uuid",
+] }
+
+# `.form()` (used by src/twilio.rs) is not feature-gated in reqwest 0.12 — there
+# is no "form" feature, and naming one fails resolution outright.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# Explicit rustls provider (reqwest + sqlx both use rustls); installed once at startup.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+uuid = { version = "1", features = ["serde", "v4", "v5"] }
+thiserror = "2"
+anyhow = "1"
+
+# Optional VPC cache. Postgres remains authoritative; Redis only accelerates
+# rate-limit and revocation checks, so cache loss cannot corrupt auth state.
+redis = { version = "1", default-features = false, features = ["tokio-comp", "connection-manager"] }
+
+# --- Observability: OTel traces -> collector, JSON logs -> Loki, /metrics -> Prometheus ---
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
+tracing-opentelemetry = "0.33"
+opentelemetry = "0.32"
+opentelemetry_sdk = { version = "0.32", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.32", default-features = false, features = [
+    "trace",
+    "http-proto",
+    "reqwest-client",
+    "reqwest-rustls",
+] }
+opentelemetry-http = "0.32"
+opentelemetry-semantic-conventions = "0.32"
+prometheus = { version = "0.14", default-features = false }
+
+# Canonical ores.otel.log Rust implementation. Zed owns the package graph in
+# `.zpkg.toml`; Cargo pins the same reviewed source commit for reproducible Rust
+# builds until zed-pkg emits native Cargo source replacement metadata.
+next_loggers = { package = "oresoftware-next-loggers", git = "https://github.com/ores-otel/ores.otel.log.git", rev = "4a9d90b1059af268e94b47eeb4210d9454686f9a" }
+
+# --- CLI flags -> env at startup, driven by .cli-flags.toml (native lib, best-effort) ---
+flags2env = { git = "https://github.com/ORESoftware/flags-2-env.git", rev = "16fbd8b724e76990e9dcf6237bf44528433b09b1" }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+# Used by integration tests to sign Supabase-style test tokens and build JWKS.
+jsonwebtoken = { version = "11", features = ["aws_lc_rs"] }
+p256 = { version = "0.13", features = ["ecdsa", "jwk", "pem", "pkcs8"] }
+serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
