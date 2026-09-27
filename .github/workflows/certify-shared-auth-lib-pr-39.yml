@@ -32,7 +32,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git hash-object candidates/shared-auth-lib-pr39/src/proof_policy.rs)" = "6b3554781d0f63fc9da71d86ab051a65aedce7bd"
+          test "$(git hash-object candidates/shared-auth-lib-pr39/src/proof_policy.rs)" = "f08baca139f03b9c6f58a043a3440a5db1d31ac7"
           test "$(git hash-object candidates/shared-auth-lib-pr39/src/provider_adapter.rs)" = "867c986405c787ef0452cd61a5cf3f2e3bc6db25"
 
       - name: Format, lint, and test
