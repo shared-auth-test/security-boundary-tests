@@ -852,11 +852,7 @@ mod tests {
     #[test]
     fn projects_json_fails_closed_on_garbage_or_incomplete_entries() {
         assert!(SupabaseBackend::from_projects_json("{not-json", |_| None).is_err());
-        assert!(SupabaseBackend::from_projects_json(
-            r#"[{"name":"orphan"}]"#,
-            |_| None
-        )
-        .is_err());
+        assert!(SupabaseBackend::from_projects_json(r#"[{"name":"orphan"}]"#, |_| None).is_err());
     }
 
     fn parse_with_sonus_key(raw: &str) -> Vec<SupabaseBackend> {

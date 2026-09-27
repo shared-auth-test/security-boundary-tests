@@ -62,7 +62,7 @@ jobs:
         run: |
           set -euo pipefail
           root=candidates/shared-auth-lib-pr39-full
-          grep -Fx '# product_head=5b54aafb40ec8c833a95880ac112543c9b95fb69' "$root/SOURCE-GIT-BLOBS.txt"
+          grep -Fx '# product_head=7674e9a2bd50ae6a1892dd91a73ee6a8defa2d62' "$root/SOURCE-GIT-BLOBS.txt"
           grep -v '^#' "$root/SOURCE-GIT-BLOBS.txt" | while read -r expected path; do
             [ -n "$expected" ] || continue
             test "$(git hash-object "$root/$path")" = "$expected"

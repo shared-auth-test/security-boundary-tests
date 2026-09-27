@@ -25,9 +25,9 @@ pub mod authority;
 #[allow(clippy::result_large_err)]
 pub mod guard;
 pub mod limited;
+pub mod proof_policy;
 pub mod provider_adapter;
 pub mod provider_jwt;
-pub mod proof_policy;
 pub mod race;
 pub mod rate_limit;
 pub mod session_guard;
@@ -40,6 +40,12 @@ pub use guard::{
     AccessPolicy, AuthGuard, AuthGuardConfig, Guard, GuardConfig, ORE_SESSION_COOKIE,
     SUPABASE_TOKEN_COOKIE, SUPABASE_TOKEN_HEADER,
 };
+pub use proof_policy::{
+    arbitrate, AcceptedIdentity, ArbitrationDecision, OptimisticCustomerPolicy,
+    PrivilegedAdministrationPolicy, ProofClass, ProofPolicy, ProviderIdentityKey, ProviderKind,
+    ProviderVerdict, RejectionReason, StrictProviderPairPolicy, StrictSubsystemGrantPolicy,
+    VerifiedProof,
+};
 pub use provider_adapter::{
     validate_adapter_contract, ExchangeRequest, ExchangeResult, NativeSharedAuthAdapter,
     NeonAuthAdapter, ProviderAdapter, ProviderBackend, ProviderCapabilities, ProviderError,
@@ -49,12 +55,6 @@ pub use provider_adapter::{
 pub use provider_jwt::{
     JwtVerificationError, ProviderJwtConfig, ProviderJwtVerifier, ServerJwtSigner, SignedJwt,
     SigningConfig, VerifiedJwt,
-};
-pub use proof_policy::{
-    arbitrate, AcceptedIdentity, ArbitrationDecision, OptimisticCustomerPolicy,
-    PrivilegedAdministrationPolicy, ProofClass, ProofPolicy, ProviderIdentityKey, ProviderKind,
-    ProviderVerdict, RejectionReason, StrictProviderPairPolicy, StrictSubsystemGrantPolicy,
-    VerifiedProof,
 };
 pub use race::{race, race_many, ArmFailure, ArmResult, BoxedAuthorityArm};
 pub use rate_limit::{
