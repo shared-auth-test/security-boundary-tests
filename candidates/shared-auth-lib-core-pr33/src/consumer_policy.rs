@@ -87,30 +87,34 @@ mod tests {
     fn central_policy_admits_only_declared_pages() {
         let policy = central_shared_auth_policy().expect("central policy must resolve");
 
-        assert!(policy.consumer_action_is_admitted(ConsumerPolicyAction::RenderPage(
-            AuthPage::SignIn,
-        )));
-        assert!(!policy.consumer_action_is_admitted(ConsumerPolicyAction::RenderPage(
-            AuthPage::SignUp,
-        )));
+        assert!(
+            policy.consumer_action_is_admitted(ConsumerPolicyAction::RenderPage(AuthPage::SignIn,))
+        );
+        assert!(!policy
+            .consumer_action_is_admitted(ConsumerPolicyAction::RenderPage(AuthPage::SignUp,)));
     }
 
     #[test]
     fn two_factor_methods_are_an_allow_list() {
         let policy = central_shared_auth_policy().expect("central policy must resolve");
 
-        assert!(policy.consumer_action_is_admitted(ConsumerPolicyAction::UseTwoFactor(
-            FactorMethod::Totp,
-        )));
-        assert!(policy.consumer_action_is_admitted(ConsumerPolicyAction::UseTwoFactor(
-            FactorMethod::Passkey,
-        )));
-        assert!(!policy.consumer_action_is_admitted(ConsumerPolicyAction::UseTwoFactor(
-            FactorMethod::EmailOtp,
-        )));
-        assert!(!policy.consumer_action_is_admitted(ConsumerPolicyAction::UseTwoFactor(
-            FactorMethod::SmsOtp,
-        )));
+        assert!(policy
+            .consumer_action_is_admitted(ConsumerPolicyAction::UseTwoFactor(FactorMethod::Totp,)));
+        assert!(
+            policy.consumer_action_is_admitted(ConsumerPolicyAction::UseTwoFactor(
+                FactorMethod::Passkey,
+            ))
+        );
+        assert!(
+            !policy.consumer_action_is_admitted(ConsumerPolicyAction::UseTwoFactor(
+                FactorMethod::EmailOtp,
+            ))
+        );
+        assert!(
+            !policy.consumer_action_is_admitted(ConsumerPolicyAction::UseTwoFactor(
+                FactorMethod::SmsOtp,
+            ))
+        );
     }
 
     #[test]
@@ -118,9 +122,8 @@ mod tests {
         let policy = central_shared_auth_policy().expect("central policy must resolve");
 
         assert_eq!(
-            policy.require_consumer_action(ConsumerPolicyAction::UseThreeFactor(
-                FactorMethod::Totp,
-            )),
+            policy
+                .require_consumer_action(ConsumerPolicyAction::UseThreeFactor(FactorMethod::Totp,)),
             Err(ConsumerPolicyDenied::ThreeFactorDisabled),
         );
     }
@@ -149,14 +152,15 @@ mod tests {
             .resolve(SharedAuthDefaults::default())
             .expect("overlay must resolve");
 
-        assert!(policy.consumer_action_is_admitted(ConsumerPolicyAction::RenderPage(
-            AuthPage::SignUp,
-        )));
-        assert!(policy.consumer_action_is_admitted(ConsumerPolicyAction::UseTwoFactor(
-            FactorMethod::EmailOtp,
-        )));
-        assert!(!policy.consumer_action_is_admitted(ConsumerPolicyAction::UseTwoFactor(
-            FactorMethod::Totp,
-        )));
+        assert!(
+            policy.consumer_action_is_admitted(ConsumerPolicyAction::RenderPage(AuthPage::SignUp,))
+        );
+        assert!(
+            policy.consumer_action_is_admitted(ConsumerPolicyAction::UseTwoFactor(
+                FactorMethod::EmailOtp,
+            ))
+        );
+        assert!(!policy
+            .consumer_action_is_admitted(ConsumerPolicyAction::UseTwoFactor(FactorMethod::Totp,)));
     }
 }
