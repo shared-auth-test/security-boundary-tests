@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shared-auth.dev/contracts/provider-identity-binding/authored.schema.json",
+  "$ref": "#/$defs/ProviderIdentityBinding",
+  "$defs": {
+    "ProviderIdentityKey": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "issuer", "subject", "realm"],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9:_-]{0,63}$"
+        },
+        "issuer": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 2048,
+          "pattern": "^https://"
+        },
+        "subject": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "realm": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9:_-]{0,63}$"
+        }
+      }
+    },
+    "LegacyIdentityReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["migration_state", "migration_basis"],
+      "properties": {
+        "principal_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "provider_tenant": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "provider_subject": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "migration_state": {
+          "type": "string",
+          "enum": ["not_required", "mapped", "quarantined"]
+        },
+        "migration_basis": {
+          "type": "string",
+          "enum": ["canonical_tuple", "reviewed_provider_mapping", "fresh_reverification", "insufficient_evidence"]
+        }
+      }
+    },
+    "ProviderIdentityBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "key", "shared_user_id", "status"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "key": { "$ref": "#/$defs/ProviderIdentityKey" },
+        "shared_user_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "revoked"]
+        },
+        "legacy": { "$ref": "#/$defs/LegacyIdentityReference" }
+      }
+    },
+    "IdentityNonMergeScenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "left", "right", "matching_profile_email", "email_is_identity_evidence", "expected_same_identity"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "left": { "$ref": "#/$defs/ProviderIdentityBinding" },
+        "right": { "$ref": "#/$defs/ProviderIdentityBinding" },
+        "matching_profile_email": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 320
+        },
+        "email_is_identity_evidence": { "const": false },
+        "expected_same_identity": { "const": false }
+      }
+    }
+  }
+}
