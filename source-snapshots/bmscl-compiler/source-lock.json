@@ -1,7 +1,7 @@
 {
   "schema_version": "bmscl-compiler-cert.v1",
   "source_repository": "beamscale/bmscl-compiler",
-  "source_commit": "10a751604be04d2aa64bd97fe428778e864565e5",
+  "source_commit": "8d654810959a089532c5c83ba29056298df3e298",
   "files": {
     "Cargo.toml": "d6193ba04fe4c5523d86c7d4002cf88b40c48479",
     "src/admission.rs": "4ea396e8175a248fcab6b42def53f4bc2a17728e",
@@ -17,7 +17,7 @@
     "src/phoenix_release.rs": "e3f81137c3e33dc88f7fd43950228c941e4e875d",
     "src/policy.rs": "ac1ad4854e06a27cf78bcf6d4528af5479294b70",
     "src/process_dict_verify.rs": "3c207c20f2e40a0ea6fec0a1f2677752bc36247f",
-    "src/safety_cache.rs": "7226c9e58edc9ee811d75d78e007a21786da1e37",
+    "src/safety_cache.rs": "9dde11272d481ea3c207e7316343d75ce881b21f",
     "src/trusted_sdk.rs": "8db9c7ed406573856f5e80cc04cde6540dbba2c3",
     "tests/admission.rs": "cc4645ac258703d4b4ccdeadcc90bd8200e5dafa"
   }
