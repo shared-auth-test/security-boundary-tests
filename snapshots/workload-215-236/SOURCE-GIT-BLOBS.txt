@@ -11,3 +11,4 @@ c8578db78fc9db195bb6c5920f6c99430b66ebbf src/token/claims.rs
 ec9ef60545730c2cea5ffa07958a10129e63dbe3 src/token/assurance.rs
 f08932da78d724c587779aa79c06b6f2370bcc9f src/token/jwks.rs
 8f3afeaa3f19db4f38d61f2760ded9048cbe0487 src/token/minter.rs
+ceb4f5559c75939d0858edd50bb8b68c938419c0 src/workload/store.rs
