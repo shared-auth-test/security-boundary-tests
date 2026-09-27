@@ -1,0 +1,14 @@
+{
+  "name": "ores-shared-auth-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node --check src/index.mjs && node --check src/domain-contract.mjs && node --check src/domain-boundary.mjs && node --check src/domain-origins.mjs && node --check src/domain-static.mjs && node --check src/domain-router.mjs && node --check src/supabase-jwt.mjs",
+    "test": "node --test test/*.test.mjs",
+    "deploy:dry": "wrangler deploy --dry-run"
+  },
+  "devDependencies": {
+    "wrangler": "^4.131.1"
+  }
+}
