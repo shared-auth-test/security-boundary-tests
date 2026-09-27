@@ -635,11 +635,7 @@ mod tests {
             "root-a",
             ProofClass::CustomerIdentity,
         );
-        let subsystem = proof(
-            ProviderKind::NeonAuth,
-            "root-b",
-            ProofClass::SubsystemGrant,
-        );
+        let subsystem = proof(ProviderKind::NeonAuth, "root-b", ProofClass::SubsystemGrant);
 
         assert_eq!(
             arbitrate(&policy, &[customer, subsystem], 100),
