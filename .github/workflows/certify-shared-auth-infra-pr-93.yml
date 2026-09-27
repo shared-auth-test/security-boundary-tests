@@ -1,0 +1,66 @@
+name: certify Shared Auth infra PR 93
+
+on:
+  pull_request:
+    paths:
+      - 'candidates/shared-auth-infra-pr93/**'
+      - '.github/workflows/certify-shared-auth-infra-pr-93.yml'
+      - 'docs/shared-auth-infra-pr-93-certification.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: certify-shared-auth-infra-pr-93-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  exact-node-policy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          show-progress: false
+
+      - name: Install Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: ''
+
+      - name: Verify exact product blobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git hash-object candidates/shared-auth-infra-pr93/workers/auth-policy/package.json)" = "41e2e4c252904ed6a43807b1134b6e7ac57509a6"
+          test "$(git hash-object candidates/shared-auth-infra-pr93/workers/auth-policy/index.mjs)" = "c2cb35563e629fb29df7ca7da2a7030dbfb70b93"
+          test "$(git hash-object candidates/shared-auth-infra-pr93/workers/auth-policy/index.d.ts)" = "0a7bc1dc6f64c8055c7e6121826962f957886402"
+          test "$(git hash-object candidates/shared-auth-infra-pr93/workers/auth-policy/test/policy.test.mjs)" = "afccf274d541401eefbfe502bed966093afa67f1"
+          test "$(git hash-object candidates/shared-auth-infra-pr93/workers/auth-policy/test/okla-quaestor.test.mjs)" = "3d9a14b44a3ccbbcb8ee3ba036ce9658f2fd7934"
+          test "$(git hash-object candidates/shared-auth-infra-pr93/workers/auth-edge/src/index.mjs)" = "6900aa298b1169bc75d4b9fa560574204c9c2bfb"
+          test "$(git hash-object candidates/shared-auth-infra-pr93/workers/auth-edge/test/index.test.mjs)" = "e7edfdfb32b2cd3a802288738bb5b450eaa7d662"
+
+      - name: Syntax check exact implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check candidates/shared-auth-infra-pr93/workers/auth-policy/index.mjs
+          node --check candidates/shared-auth-infra-pr93/workers/auth-edge/src/index.mjs
+
+      - name: Run proof-policy and Okla-Quaestor contract tests
+        shell: bash
+        working-directory: candidates/shared-auth-infra-pr93/workers/auth-policy
+        run: |
+          set -euo pipefail
+          node --test test/*.test.mjs
+
+      - name: Run auth-edge single-writer and header-boundary tests
+        shell: bash
+        working-directory: candidates/shared-auth-infra-pr93/workers/auth-edge
+        run: |
+          set -euo pipefail
+          node --test test/index.test.mjs

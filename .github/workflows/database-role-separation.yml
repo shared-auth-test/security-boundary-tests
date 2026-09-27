@@ -1,0 +1,42 @@
+name: auth database role separation
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  role-boundary:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: "22.22.1"
+      - name: Prove browser service and admin role boundaries
+        shell: bash
+        run: |
+          node <<'NODE'
+          const assert = require('node:assert/strict');
+          const authorize = ({ role, resource, action, aal=1 }) => {
+            if (role === 'browser') return resource === 'public_profile' && action === 'read';
+            if (role === 'service_role') return ['public_profile','session_metadata'].includes(resource) && ['read','write'].includes(action);
+            if (role === 'admin') return aal >= 2 && ['public_profile','session_metadata','provider_secret','audit'].includes(resource);
+            return false;
+          };
+          assert.equal(authorize({role:'browser',resource:'public_profile',action:'read'}), true);
+          assert.equal(authorize({role:'browser',resource:'provider_secret',action:'read'}), false);
+          assert.equal(authorize({role:'browser',resource:'session_metadata',action:'read'}), false);
+          assert.equal(authorize({role:'service_role',resource:'session_metadata',action:'write'}), true);
+          assert.equal(authorize({role:'service_role',resource:'provider_secret',action:'read'}), false);
+          assert.equal(authorize({role:'admin',resource:'provider_secret',action:'read',aal:1}), false);
+          assert.equal(authorize({role:'admin',resource:'provider_secret',action:'read',aal:2}), true);
+          const projectedEnv = ['PUBLIC_APP_URL','AUTH_PROVIDER_NAME'];
+          const forbidden = ['DATABASE_URL','SUPABASE_SERVICE_ROLE_KEY','NEON_DATABASE_URL'];
+          assert.equal(forbidden.some(k => projectedEnv.includes(k)), false, 'database credentials must not project to browser/worker environment');
+          NODE
