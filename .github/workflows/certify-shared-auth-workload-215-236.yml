@@ -1,0 +1,131 @@
+name: certify Shared Auth workload identity PRs 215 and 236
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/certify-shared-auth-workload-215-236.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  foundation:
+    name: PR 215 exact head
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_DB: shared_auth_workload
+          POSTGRES_USER: shared_auth
+          POSTGRES_PASSWORD: shared_auth_workload
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U shared_auth -d shared_auth_workload"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      PRODUCT_SHA: a1e06aa5f99df226f5d81e689f64fc24b208bac9
+      AUTH_TEST_DATABASE_URL: postgres://shared_auth:shared_auth_workload@127.0.0.1:5432/shared_auth_workload
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Fetch exact product head
+        run: |
+          set -euo pipefail
+          git init product
+          git -C product remote add origin https://github.com/shared-auth/shared-auth-server.rs.git
+          git -C product fetch --depth=1 origin "$PRODUCT_SHA"
+          git -C product checkout --detach FETCH_HEAD
+          test "$(git -C product rev-parse HEAD)" = "$PRODUCT_SHA"
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --component rustfmt,clippy
+      - name: Apply baseline and workload schemas
+        working-directory: product
+        run: |
+          set -euo pipefail
+          psql "$AUTH_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f db/schema.sql
+          psql "$AUTH_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f db/workload-identities.sql
+          psql "$AUTH_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f db/workload-identities.sql
+      - name: Exercise workload database invariants
+        working-directory: product
+        run: psql "$AUTH_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/workload_identity_db.sql
+      - name: Rust formatting
+        working-directory: product
+        run: cargo fmt --all -- --check
+      - name: Workload identity unit tests
+        working-directory: product
+        run: cargo test --locked workload::
+      - name: Workload token profile tests
+        working-directory: product
+        run: cargo test --locked workload_token::
+      - name: Workload integration contract
+        working-directory: product
+        run: cargo test --locked --test workload_identity_contract
+      - name: Strict Clippy
+        working-directory: product
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+  signer:
+    name: PR 236 exact head
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_DB: shared_auth_workload
+          POSTGRES_USER: shared_auth
+          POSTGRES_PASSWORD: shared_auth_workload
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U shared_auth -d shared_auth_workload"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      PRODUCT_SHA: 402b955169f733f71fb6a84030a0b4ce7ef6381e
+      AUTH_TEST_DATABASE_URL: postgres://shared_auth:shared_auth_workload@127.0.0.1:5432/shared_auth_workload
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Fetch exact product head
+        run: |
+          set -euo pipefail
+          git init product
+          git -C product remote add origin https://github.com/shared-auth/shared-auth-server.rs.git
+          git -C product fetch --depth=1 origin "$PRODUCT_SHA"
+          git -C product checkout --detach FETCH_HEAD
+          test "$(git -C product rev-parse HEAD)" = "$PRODUCT_SHA"
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --component rustfmt,clippy
+      - name: Apply baseline and workload schemas
+        working-directory: product
+        run: |
+          set -euo pipefail
+          psql "$AUTH_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f db/schema.sql
+          psql "$AUTH_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f db/workload-identities.sql
+          psql "$AUTH_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f db/workload-identities.sql
+      - name: Exercise workload database invariants
+        working-directory: product
+        run: psql "$AUTH_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/workload_identity_db.sql
+      - name: Rust formatting
+        working-directory: product
+        run: cargo fmt --all -- --check
+      - name: Workload identity and token tests
+        working-directory: product
+        run: |
+          cargo test --locked workload::
+          cargo test --locked workload_token::
+          cargo test --locked token::minter::tests::workload_
+          cargo test --locked --test workload_identity_contract
+      - name: Strict Clippy
+        working-directory: product
+        run: cargo clippy --all-targets --locked -- -D warnings

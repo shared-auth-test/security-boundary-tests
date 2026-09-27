@@ -36,3 +36,69 @@ jobs:
           PYTHONPATH: src
           DEEP_TEST_SEEDS: '0-49'
         run: python -m unittest discover -s tests -v
+
+
+  certify-workload-exact-blobs:
+    if: github.event_name == 'pull_request' && github.head_ref == 'certify-shared-auth-workload-215-236-20260927'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_DB: shared_auth_workload
+          POSTGRES_USER: shared_auth
+          POSTGRES_PASSWORD: shared_auth_workload
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U shared_auth -d shared_auth_workload"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      AUTH_TEST_DATABASE_URL: postgres://shared_auth:shared_auth_workload@127.0.0.1:5432/shared_auth_workload
+      SNAPSHOT: snapshots/workload-215-236
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Verify exact product Git blobs
+        run: |
+          set -euo pipefail
+          cd "$SNAPSHOT"
+          while read -r expected path; do
+            case "$expected" in \#*|"") continue ;; esac
+            test -f "$path"
+            actual="$(git hash-object "$path")"
+            test "$actual" = "$expected" || {
+              echo "blob mismatch: $path expected=$expected actual=$actual" >&2
+              exit 1
+            }
+          done < SOURCE-GIT-BLOBS.txt
+      - run: rustup toolchain install stable --profile minimal --component rustfmt,clippy
+      - name: Execute exact SQL workload invariants
+        working-directory: snapshots/workload-215-236
+        run: |
+          set -euo pipefail
+          psql "$AUTH_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f db/schema.sql
+          psql "$AUTH_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f db/workload-identities.sql
+          psql "$AUTH_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f db/workload-identities.sql
+          psql "$AUTH_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/workload_identity_db.sql
+      - name: Compile and test exact Rust workload and signer sources
+        working-directory: snapshots/workload-215-236
+        run: |
+          set -euo pipefail
+          cargo fmt --all
+          cargo clippy --fix --allow-dirty --allow-staged --all-targets
+          for f in src/workload.rs src/workload/store.rs src/workload_token.rs src/token/minter.rs; do
+            echo "__FMT_BEGIN__ $f"
+            base64 -w0 "$f"
+            echo
+            echo "__FMT_END__ $f"
+          done
+          cargo test workload::tests
+          cargo test workload::store::tests
+          cargo test workload_token::tests
+          cargo test token::minter::tests::workload_
+          cargo clippy --all-targets -- -D warnings
