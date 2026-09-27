@@ -81,11 +81,7 @@ impl SharedAuthClient {
         return self.send_json(request).await;
     }
 
-    pub async fn login(
-        &self,
-        email: &str,
-        password: &str,
-    ) -> Result<SessionResponse, ClientError> {
+    pub async fn login(&self, email: &str, password: &str) -> Result<SessionResponse, ClientError> {
         let email = validated_email(email)?;
         validate_login_password(password)?;
         let request = self.request(Method::POST, &["auth", "login"])?;
@@ -247,11 +243,17 @@ mod tests {
         let client = SharedAuthClient::new("http://127.0.0.1:1");
 
         assert!(matches!(
-            client.request_passwordless(" user@example.com").await.unwrap_err(),
+            client
+                .request_passwordless(" user@example.com")
+                .await
+                .unwrap_err(),
             ClientError::InvalidInput("email")
         ));
         assert!(matches!(
-            client.register("user@example.com", "too-short", None).await.unwrap_err(),
+            client
+                .register("user@example.com", "too-short", None)
+                .await
+                .unwrap_err(),
             ClientError::InvalidInput("password")
         ));
         assert!(matches!(
