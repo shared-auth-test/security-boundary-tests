@@ -11,8 +11,16 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
-      GH_TOKEN: ${{ secrets.TEST_FLEET_GITHUB_TOKEN || github.token }}
+      GH_TOKEN: ${{ secrets.TEST_FLEET_GITHUB_TOKEN || secrets.TEST_FLEET_READ_TOKEN || secrets.ORES_CROSS_REPO_READ_TOKEN }}
     steps:
+      - name: Require private cross-org read credential
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "::error title=Infrastructure blocked::No private cross-org read credential is configured (checked TEST_FLEET_GITHUB_TOKEN, TEST_FLEET_READ_TOKEN, ORES_CROSS_REPO_READ_TOKEN)."
+            exit 1
+          fi
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with: { persist-credentials: false }
       - name: Test 1 - scan current counterpart tips for tracked secret material
