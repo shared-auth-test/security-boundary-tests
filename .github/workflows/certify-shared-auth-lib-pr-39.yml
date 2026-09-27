@@ -33,7 +33,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git hash-object candidates/shared-auth-lib-pr39/src/proof_policy.rs)" = "408c7f18e16ae8ddcb2ec17ab800924271b559c6"
+          test "$(git hash-object candidates/shared-auth-lib-pr39/src/proof_policy.rs)" = "c2644e672311c4173628ac5fae91c54243d0a0cc"
           test "$(git hash-object candidates/shared-auth-lib-pr39/src/provider_adapter.rs)" = "867c986405c787ef0452cd61a5cf3f2e3bc6db25"
 
       - name: Format, lint, and test
@@ -62,7 +62,7 @@ jobs:
         run: |
           set -euo pipefail
           root=candidates/shared-auth-lib-pr39-full
-          grep -Fx '# product_head=4b0792a6685fa27188b4ed52d89c580d65015bb5' "$root/SOURCE-GIT-BLOBS.txt"
+          grep -Fx '# product_head=edec738cfe1c7c2ad6b47c8af9cb16727bc96147' "$root/SOURCE-GIT-BLOBS.txt"
           grep -v '^#' "$root/SOURCE-GIT-BLOBS.txt" | while read -r expected path; do
             [ -n "$expected" ] || continue
             test "$(git hash-object "$root/$path")" = "$expected"
