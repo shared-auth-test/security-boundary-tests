@@ -26,6 +26,9 @@ jobs:
         run: |
           set -euo pipefail
           root=candidates/shared-auth-lib-core-pr33
+          test "$(git hash-object "$root/contracts/source-lock.toml")" = "2cb363a18110a66c90e6231774ed62ac28312ff6"
+          test "$(git hash-object "$root/.zpkg.toml")" = "41d5f1a27bd0f1db30d5df51c02bdf31c34449c8"
+          test "$(git hash-object "$root/server/README.md")" = "bb80e417ce1c9fd7738dc40b46ebb8954a37b514"
           test "$(git hash-object "$root/.shared-auth.toml")" = "d252be23957d241c7ad8f9c4f25b2718402275ad"
           test "$(git hash-object "$root/SOURCE-Cargo.toml")" = "8c98622313f813d003705e5c2f3a76345bc6c297"
           test "$(git hash-object "$root/core-boundary.toml")" = "f94755b86a7532c5777a215483182d021c282ab6"
