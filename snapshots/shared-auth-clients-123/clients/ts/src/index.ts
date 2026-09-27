@@ -779,7 +779,7 @@ export class SharedAuthClient {
   private authedJson<T>(
     path: string,
     accessToken: string,
-    method: "GET" | "POST" = "GET",
+    method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" = "GET",
     body?: unknown,
   ): Promise<T> {
     const headers: Record<string, string> = {
