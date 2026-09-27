@@ -238,6 +238,17 @@ fn optimistic(
         return ArbitrationDecision::Rejected(RejectionReason::InvalidPolicy);
     }
 
+    for provider in &policy.required_providers {
+        if let Some(ProviderVerdict::Verified(proof)) = by_provider.get(provider) {
+            if proof.class != ProofClass::CustomerIdentity {
+                return ArbitrationDecision::Rejected(RejectionReason::WrongProofClass);
+            }
+            if proof.assurance < policy.minimum_assurance {
+                return ArbitrationDecision::Rejected(RejectionReason::InsufficientAssurance);
+            }
+        }
+    }
+
     let eligible = verified
         .iter()
         .copied()
@@ -582,6 +593,58 @@ mod tests {
             }
             other => panic!("expected provisional decision, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn optimistic_required_provider_with_weak_assurance_is_rejected() {
+        let policy = ProofPolicy::OptimisticCustomer(OptimisticCustomerPolicy {
+            required_providers: BTreeSet::from([ProviderKind::Supabase, ProviderKind::NeonAuth]),
+            max_pending_seconds: 30,
+            minimum_assurance: 2,
+        });
+        let strong = proof(
+            ProviderKind::Supabase,
+            "root-a",
+            ProofClass::CustomerIdentity,
+        );
+        let mut weak = match proof(
+            ProviderKind::NeonAuth,
+            "root-b",
+            ProofClass::CustomerIdentity,
+        ) {
+            ProviderVerdict::Verified(proof) => proof,
+            _ => panic!("proof helper must return verified"),
+        };
+        weak.assurance = 1;
+
+        assert_eq!(
+            arbitrate(&policy, &[strong, ProviderVerdict::Verified(weak)], 100),
+            ArbitrationDecision::Rejected(RejectionReason::InsufficientAssurance)
+        );
+    }
+
+    #[test]
+    fn optimistic_required_provider_with_wrong_class_is_rejected() {
+        let policy = ProofPolicy::OptimisticCustomer(OptimisticCustomerPolicy {
+            required_providers: BTreeSet::from([ProviderKind::Supabase, ProviderKind::NeonAuth]),
+            max_pending_seconds: 30,
+            minimum_assurance: 1,
+        });
+        let customer = proof(
+            ProviderKind::Supabase,
+            "root-a",
+            ProofClass::CustomerIdentity,
+        );
+        let subsystem = proof(
+            ProviderKind::NeonAuth,
+            "root-b",
+            ProofClass::SubsystemGrant,
+        );
+
+        assert_eq!(
+            arbitrate(&policy, &[customer, subsystem], 100),
+            ArbitrationDecision::Rejected(RejectionReason::WrongProofClass)
+        );
     }
 
     #[test]
