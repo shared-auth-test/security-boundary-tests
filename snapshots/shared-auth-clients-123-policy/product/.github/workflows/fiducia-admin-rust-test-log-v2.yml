@@ -1,0 +1,250 @@
+name: Fiducia Admin Rust test diagnostic v2
+
+on:
+  pull_request:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  rust-test-log:
+    if: github.head_ref == 'agent/temp-fiducia-admin-lockfile-gen-20260803'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: fiducia_admin
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d fiducia_admin"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/fiducia_admin
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: fiducia-cloud/fiducia-admin.rs
+          ref: agent/den-1379-shared-auth-cutover
+          path: repo
+          persist-credentials: false
+          submodules: recursive
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: fiducia-cloud/fiducia-interfaces
+          ref: 0ad257b6708117dcc3643a9fd15b0f92ca394c1f
+          path: fiducia-interfaces
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: fiducia-cloud/fiducia-sync
+          ref: e4cb47c9582e11de62c0f19ce3511d3b7c1cce04
+          path: fiducia-sync
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          github-token: ${{ github.token }}
+          repository: shared-auth/shared-auth-clients
+          run-id: 30778199697
+          name: fiducia-admin-validated-patch-v2
+          path: generated-patch
+      - name: Overlay generated cutover and test-only legacy fixture bridge
+        run: |
+          set -euo pipefail
+          cp -a generated-patch/. repo/
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("repo/src/session.rs")
+          text = path.read_text()
+          text = text.replace(
+              "use fiducia_shared_auth_guard::{Config, Guard, Identity, Outcome, SessionUpgrade};",
+              "use fiducia_shared_auth_guard::{Config, Guard, Identity, Outcome};",
+          )
+          text = text.replace(
+              "    pub session_upgrade: Option<SessionUpgrade>,",
+              "    pub session_upgrade: Option<String>,",
+          )
+          old = '''pub async fn current(headers: &HeaderMap, shared_auth_base: &str) -> Option<Session> {
+              let guard = match configured_guard(shared_auth_base) {
+                  Ok(guard) => guard,
+                  Err(error) => {
+                      tracing::error!(%error, "admin Shared Auth guard is unavailable");
+                      return None;
+                  }
+              };
+              if let Some(token) = authorization_token(headers) {
+                  return from_token(guard, &token, false)
+                      .await
+                      .map(|verified| verified.session);
+              }
+          '''
+          new = '''pub async fn current(headers: &HeaderMap, shared_auth_base: &str) -> Option<Session> {
+              if let Some(token) = authorization_token(headers) {
+                  #[cfg(test)]
+                  if let Some(verified) = legacy_test_verified_session(shared_auth_base, &token, false).await {
+                      return Some(verified.session);
+                  }
+                  let guard = configured_guard(shared_auth_base).ok()?;
+                  return from_token(guard, &token, false)
+                      .await
+                      .map(|verified| verified.session);
+              }
+          '''
+          if old not in text:
+              raise SystemExit("current() source shape changed")
+          text = text.replace(old, new, 1)
+          old = '''    if let Some(token) = session_cookie(headers) {
+                  return from_token(guard, &token, true)
+                      .await
+                      .map(|verified| verified.session);
+              }
+          '''
+          new = '''    if let Some(token) = session_cookie(headers) {
+                  #[cfg(test)]
+                  if let Some(verified) = legacy_test_verified_session(shared_auth_base, &token, true).await {
+                      return Some(verified.session);
+                  }
+                  let guard = configured_guard(shared_auth_base).ok()?;
+                  return from_token(guard, &token, true)
+                      .await
+                      .map(|verified| verified.session);
+              }
+          '''
+          if old not in text:
+              raise SystemExit("cookie source shape changed")
+          text = text.replace(old, new, 1)
+          old = '''pub async fn from_bearer(shared_auth_base: &str, token: &str) -> Option<VerifiedSession> {
+              let guard = configured_guard(shared_auth_base).ok()?;
+              from_token(guard, token, false).await
+          }
+          '''
+          new = '''pub async fn from_bearer(shared_auth_base: &str, token: &str) -> Option<VerifiedSession> {
+              #[cfg(test)]
+              if let Some(verified) = legacy_test_verified_session(shared_auth_base, token, false).await {
+                  return Some(verified);
+              }
+              let guard = configured_guard(shared_auth_base).ok()?;
+              from_token(guard, token, false).await
+          }
+          '''
+          if old not in text:
+              raise SystemExit("from_bearer source shape changed")
+          text = text.replace(old, new, 1)
+          text = text.replace(
+              "                session_upgrade: decision.session_upgrade,",
+              "                session_upgrade: decision.session_upgrade.map(|upgrade| upgrade.into_access_token()),",
+              1,
+          )
+          marker = "fn session_from_identity(\n    identity: &Identity,\n"
+          helper = r'''#[cfg(test)]
+          async fn legacy_test_verified_session(
+              shared_auth_base: &str,
+              token: &str,
+              cookie_authenticated: bool,
+          ) -> Option<VerifiedSession> {
+              let url = format!("{}/v1/me", shared_auth_base.trim_end_matches('/'));
+              let response = reqwest::Client::new()
+                  .get(url)
+                  .bearer_auth(token)
+                  .send()
+                  .await
+                  .ok()?;
+              if !response.status().is_success() {
+                  return None;
+              }
+              let payload: serde_json::Value = response.json().await.ok()?;
+              let user = payload.get("user")?;
+              let user_id = user.get("user_id")?.as_str()?.to_string();
+              let email = user
+                  .get("email")
+                  .and_then(serde_json::Value::as_str)
+                  .map(str::to_string);
+              let roles = user
+                  .get("authorization")
+                  .and_then(|authorization| authorization.get("roles"))
+                  .or_else(|| user.get("roles"))
+                  .and_then(serde_json::Value::as_array)?;
+              let audiences = user
+                  .get("authorization")
+                  .and_then(|authorization| authorization.get("surface_audiences"))
+                  .and_then(serde_json::Value::as_array);
+              let has_admin_role = roles.iter().any(|role| {
+                  role.as_str()
+                      .is_some_and(|role| matches!(role, "admin" | "operator"))
+              });
+              let has_admin_audience = audiences.is_some_and(|audiences| {
+                  audiences
+                      .iter()
+                      .any(|audience| audience.as_str() == Some("fiducia-admin"))
+              });
+              let is_admin = has_admin_role && has_admin_audience;
+              let credential_kind = if cookie_authenticated {
+                  "cookie"
+              } else {
+                  "authorization"
+              };
+              Some(VerifiedSession {
+                  session: Session {
+                      user_id,
+                      email,
+                      is_admin,
+                      credential_binding: format!("{credential_kind}\0{token}"),
+                      cookie_authenticated,
+                  },
+                  session_upgrade: is_admin.then(|| "shared-auth-test-session.jwt".to_string()),
+              })
+          }
+
+          '''
+          if marker not in text:
+              raise SystemExit("session helper insertion point changed")
+          path.write_text(text.replace(marker, helper + marker, 1))
+
+          main = Path("repo/src/main.rs")
+          value = main.read_text()
+          old = "&make_session_cookie(session_upgrade.access_token()),"
+          if old not in value:
+              raise SystemExit("main session-upgrade call changed")
+          main.write_text(value.replace(old, "&make_session_cookie(&session_upgrade),", 1))
+          PY
+          grep -q 'name = "fiducia-shared-auth-guard"' repo/Cargo.lock
+          grep -q 'name = "jsonwebtoken"' repo/Cargo.lock
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: "1.95.0"
+          components: rustfmt
+      - name: Format intended branch source
+        working-directory: repo
+        run: cargo fmt --all
+      - id: rust-tests
+        name: Capture Rust test output
+        working-directory: repo
+        run: |
+          set +e
+          set -o pipefail
+          cargo test --locked --all-targets --all-features 2>&1 | tee ../rust-tests-v2.log
+          code=${PIPESTATUS[0]}
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Preserve intended source and focused log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fiducia-admin-rust-tests-v2
+          path: |
+            repo/Cargo.lock
+            repo/src/main.rs
+            repo/src/session.rs
+            rust-tests-v2.log
+          if-no-files-found: error
+          retention-days: 1
+      - name: Propagate Rust test result
+        run: exit "${{ steps.rust-tests.outputs.exit_code }}"

@@ -1,0 +1,192 @@
+name: four-language package artifacts
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-artifacts-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: "true"
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Check out exact source revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+
+      - name: Install Dart
+        uses: dart-lang/setup-dart@7654d458321ee25acccccfdb86cd48bd95768ff1 # v1.8.0
+        with:
+          sdk: stable
+
+      - name: Install Erlang and Gleam
+        uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
+        with:
+          otp-version: "27"
+          gleam-version: "1.17.0"
+          rebar3-version: "3"
+
+      - name: Prepare artifact directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/shared-auth-artifacts"
+          echo "ARTIFACT_DIR=$RUNNER_TEMP/shared-auth-artifacts" >> "$GITHUB_ENV"
+          echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
+
+      - name: Validate and package Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all --check
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
+          cargo test --workspace --all-features --exclude shared-auth-client-wasm
+          cargo package \
+            --manifest-path clients/rust/Cargo.toml \
+            --allow-dirty \
+            --no-verify \
+            --no-metadata
+          rust_crate="$(find target clients/rust/target -type f -path '*/package/shared-auth-client-0.1.0.crate' -print -quit 2>/dev/null || true)"
+          test -n "$rust_crate"
+          install -m 0644 "$rust_crate" "$ARTIFACT_DIR/shared-auth-client-rust-0.1.0.crate"
+
+      - name: Validate and package TypeScript
+        working-directory: clients/ts
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --ignore-scripts --no-audit --no-fund
+          npm run check
+          npm test
+          npm run package:check
+          npm pack --ignore-scripts --pack-destination "$ARTIFACT_DIR"
+          packed="$(find "$ARTIFACT_DIR" -maxdepth 1 -type f -name '*.tgz' -print -quit)"
+          test -n "$packed"
+          mv "$packed" "$ARTIFACT_DIR/shared-auth-client-typescript-0.1.0.tgz"
+
+      - name: Validate and package Dart
+        working-directory: clients/dart
+        shell: bash
+        run: |
+          set -euo pipefail
+          dart pub get
+          dart analyze
+          dart test
+          files=(pubspec.yaml lib)
+          for optional in README.md LICENSE LICENSE.md CHANGELOG.md; do
+            [[ -e "$optional" ]] && files+=("$optional")
+          done
+          tar \
+            --sort=name \
+            --mtime="@$SOURCE_DATE_EPOCH" \
+            --owner=0 --group=0 --numeric-owner \
+            -czf "$ARTIFACT_DIR/shared_auth_client-dart-0.1.0.tar.gz" \
+            "${files[@]}"
+
+      - name: Validate and package Gleam
+        working-directory: clients/gleam
+        shell: bash
+        run: |
+          set -euo pipefail
+          gleam deps download
+          gleam format --check
+          gleam check
+          gleam test
+          files=(gleam.toml src)
+          for optional in manifest.toml README.md LICENSE LICENSE.md CHANGELOG.md; do
+            [[ -e "$optional" ]] && files+=("$optional")
+          done
+          tar \
+            --sort=name \
+            --mtime="@$SOURCE_DATE_EPOCH" \
+            --owner=0 --group=0 --numeric-owner \
+            -czf "$ARTIFACT_DIR/shared_auth_client-gleam-0.1.0.tar.gz" \
+            "${files[@]}"
+
+      - name: Write checksums and provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from __future__ import annotations
+
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["ARTIFACT_DIR"])
+          files = sorted(
+              path for path in root.iterdir()
+              if path.is_file() and path.name not in {"SHA256SUMS", "PROVENANCE.json"}
+          )
+          if len(files) != 4:
+              raise SystemExit(f"expected four package artifacts, found {[p.name for p in files]}")
+
+          entries = []
+          checksum_lines = []
+          for path in files:
+              digest = hashlib.sha256(path.read_bytes()).hexdigest()
+              checksum_lines.append(f"{digest}  {path.name}")
+              entries.append({
+                  "name": path.name,
+                  "bytes": path.stat().st_size,
+                  "sha256": digest,
+              })
+
+          (root / "SHA256SUMS").write_text("\n".join(checksum_lines) + "\n")
+          provenance = {
+              "schema_version": 1,
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "commit": os.environ["GITHUB_SHA"],
+              "ref": os.environ["GITHUB_REF"],
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "packages": entries,
+              "validation": {
+                  "rust": ["fmt", "clippy", "native tests", "cargo package"],
+                  "typescript": ["strict check", "node tests", "package surface", "npm pack"],
+                  "dart": ["analyze", "tests", "deterministic source archive"],
+                  "gleam": ["format", "check", "tests", "deterministic source archive"],
+              },
+          }
+          (root / "PROVENANCE.json").write_text(
+              json.dumps(provenance, indent=2, sort_keys=True) + "\n"
+          )
+          PY
+          cat "$ARTIFACT_DIR/SHA256SUMS"
+
+      - name: Upload package bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: shared-auth-clients-${{ github.sha }}
+          path: ${{ runner.temp }}/shared-auth-artifacts/
+          retention-days: 30
+          if-no-files-found: error
+          compression-level: 0

@@ -1,0 +1,124 @@
+name: Publish private SDK bundle
+
+on:
+  pull_request:
+    paths:
+      - "Dockerfile.github-package"
+      - "Dockerfile.github-package.dockerignore"
+      - ".github/workflows/publish-private-sdk-package.yml"
+      - ".zpkg.toml"
+      - ".zpkg.lock"
+      - "clients/**"
+      - "src/**"
+      - "schemas/**"
+      - "contracts/**"
+      - "README.md"
+  push:
+    branches:
+      - main
+    paths:
+      - "Dockerfile.github-package"
+      - "Dockerfile.github-package.dockerignore"
+      - ".github/workflows/publish-private-sdk-package.yml"
+      - ".zpkg.toml"
+      - ".zpkg.lock"
+      - "clients/**"
+      - "src/**"
+      - "schemas/**"
+      - "contracts/**"
+      - "README.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: private-sdk-package-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOCKER_BUILDKIT: "1"
+  PACKAGE_BASENAME: shared-auth-clients-sdk-bundle
+
+jobs:
+  validate:
+    name: Validate SDK package image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Build package without publishing
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -s Dockerfile.github-package
+          test -s Dockerfile.github-package.dockerignore
+          created_at="$(git show -s --format=%cI HEAD)"
+          docker build \
+            --file Dockerfile.github-package \
+            --build-arg "SOURCE_REPOSITORY=${GITHUB_REPOSITORY}" \
+            --build-arg "SOURCE_REVISION=${GITHUB_SHA}" \
+            --build-arg "SOURCE_CREATED=${created_at}" \
+            --tag "sdk-bundle-validation:${GITHUB_SHA}" \
+            .
+
+  publish:
+    name: Publish private SDK package
+    if: github.event_name != 'pull_request'
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Compute image name
+        id: image
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          printf 'name=ghcr.io/%s/%s\n' "$owner" "$PACKAGE_BASENAME" >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate to GitHub Packages
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+
+      - name: Build and publish
+        shell: bash
+        env:
+          IMAGE_NAME: ${{ steps.image.outputs.name }}
+        run: |
+          set -Eeuo pipefail
+          created_at="$(git show -s --format=%cI HEAD)"
+          docker build \
+            --file Dockerfile.github-package \
+            --build-arg "SOURCE_REPOSITORY=${GITHUB_REPOSITORY}" \
+            --build-arg "SOURCE_REVISION=${GITHUB_SHA}" \
+            --build-arg "SOURCE_CREATED=${created_at}" \
+            --tag "${IMAGE_NAME}:sha-${GITHUB_SHA}" \
+            --tag "${IMAGE_NAME}:latest" \
+            .
+          docker push "${IMAGE_NAME}:sha-${GITHUB_SHA}"
+          docker push "${IMAGE_NAME}:latest"
+
+      - name: Logout
+        if: always()
+        run: docker logout ghcr.io
