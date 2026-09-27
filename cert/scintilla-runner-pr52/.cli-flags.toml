@@ -1,0 +1,442 @@
+[help]
+url = "https://github.com/ORESoftware/flags-2-env"
+
+[parse]
+allow_unknown = true
+errors_env = "FLAGS2ENV_PARSE_ERRORS"
+unknown_options_env = "FLAGS2ENV_UNKNOWN_OPTIONS"
+
+[flags.host]
+env = "HOST"
+aliases = ["host", "bind-host"]
+type = "string"
+default = "0.0.0.0"
+
+[flags.port]
+env = "PORT"
+aliases = ["port", "http-port"]
+short = "p"
+type = "integer"
+default = 8083
+
+[flags.nats_url]
+env = "NATS_URL"
+aliases = ["nats-url"]
+type = "string"
+
+[flags.otel_exporter_otlp_endpoint]
+env = "OTEL_EXPORTER_OTLP_ENDPOINT"
+aliases = ["otel-exporter-otlp-endpoint"]
+type = "string"
+
+[flags.otel_exporter_otlp_protocol]
+env = "OTEL_EXPORTER_OTLP_PROTOCOL"
+aliases = ["otel-exporter-otlp-protocol"]
+type = "string"
+default = "grpc"
+
+[flags.otel_service_name]
+env = "OTEL_SERVICE_NAME"
+aliases = ["otel-service-name"]
+type = "string"
+default = "scintilla-runner"
+
+[flags.lambda_invoke_subject]
+env = "NATS_LAMBDA_INVOKE_SUBJECT"
+aliases = ["lambda-invoke-subject"]
+type = "string"
+
+[flags.lambda_queue_group]
+env = "NATS_LAMBDA_QUEUE_GROUP"
+aliases = ["lambda-queue-group"]
+type = "string"
+
+[flags.lambda_result_subject]
+env = "NATS_LAMBDA_RESULT_SUBJECT"
+aliases = ["lambda-result-subject"]
+type = "string"
+
+[flags.lambda_functions_subject]
+env = "NATS_LAMBDA_FUNCTIONS_SUBJECT"
+aliases = ["lambda-functions-subject"]
+type = "string"
+
+[flags.lambda_max_payload_bytes]
+env = "NATS_LAMBDA_MAX_PAYLOAD_BYTES"
+aliases = ["lambda-max-payload-bytes"]
+type = "integer"
+
+[flags.lambda_database_url]
+env = "LAMBDA_DATABASE_URL"
+aliases = ["lambda-database-url"]
+type = "string"
+
+[flags.lambda_function_cache_max]
+env = "LAMBDA_FUNCTION_CACHE_MAX"
+aliases = ["lambda-function-cache-max"]
+type = "integer"
+
+# Per-function vm sandboxes retained in one pooled Node worker. Worker processes
+# are shared across functions, so each function gets its own context and
+# compiled-function cache; this bounds how many are held resident.
+[flags.lambda_sandbox_cache_max]
+env = "LAMBDA_SANDBOX_CACHE_MAX"
+aliases = ["lambda-sandbox-cache-max"]
+type = "integer"
+default = 64
+
+[flags.lambda_function_body_max_bytes]
+env = "LAMBDA_FUNCTION_BODY_MAX_BYTES"
+aliases = ["lambda-function-body-max-bytes"]
+type = "integer"
+
+[flags.lambda_child_input_max_bytes]
+env = "LAMBDA_CHILD_INPUT_MAX_BYTES"
+aliases = ["lambda-child-input-max-bytes"]
+type = "integer"
+
+[flags.lambda_result_max_bytes]
+env = "LAMBDA_RESULT_MAX_BYTES"
+aliases = ["lambda-result-max-bytes"]
+type = "integer"
+
+[flags.lambda_stream_max_bytes]
+env = "LAMBDA_STREAM_MAX_BYTES"
+aliases = ["lambda-stream-max-bytes"]
+type = "integer"
+default = 16777216
+
+[flags.lambda_stream_chunk_bytes]
+env = "LAMBDA_STREAM_CHUNK_BYTES"
+aliases = ["lambda-stream-chunk-bytes"]
+type = "integer"
+default = 65536
+
+[flags.lambda_revision_routing_enabled]
+env = "LAMBDA_REVISION_ROUTING_ENABLED"
+aliases = ["lambda-revision-routing-enabled"]
+type = "boolean"
+default = false
+
+[flags.lambda_allow_host_runtimes]
+env = "LAMBDA_ALLOW_HOST_RUNTIMES"
+aliases = ["lambda-allow-host-runtimes"]
+type = "string"
+
+[flags.lambda_prewarm_runtimes]
+env = "LAMBDA_PREWARM_RUNTIMES"
+aliases = ["lambda-prewarm-runtimes"]
+type = "string"
+
+[flags.lambda_prewarm_container_runtimes]
+env = "LAMBDA_PREWARM_CONTAINER_RUNTIMES"
+aliases = ["lambda-prewarm-container-runtimes"]
+type = "string"
+
+# Nested container execution is disabled unless an operator has provisioned a
+# dedicated isolation backend. The legacy EC2 pod must never gain host
+# containerd authority merely by setting a runtime image.
+[flags.lambda_container_execution_enabled]
+env = "LAMBDA_CONTAINER_EXECUTION_ENABLED"
+aliases = ["lambda-container-execution-enabled"]
+type = "boolean"
+default = false
+
+[flags.lambda_container_namespace]
+env = "LAMBDA_CONTAINER_NAMESPACE"
+aliases = ["lambda-container-namespace"]
+type = "string"
+
+[flags.lambda_container_network]
+env = "LAMBDA_CONTAINER_NETWORK"
+aliases = ["lambda-container-network"]
+type = "string"
+
+# Acknowledges that LAMBDA_CONTAINER_NETWORK=host exposes instance metadata,
+# node-local ports, and NetworkPolicy-free egress to user code. Without it the
+# runner refuses to build a host-networked container command.
+[flags.lambda_allow_container_host_network]
+env = "LAMBDA_ALLOW_CONTAINER_HOST_NETWORK"
+aliases = ["lambda-allow-container-host-network"]
+type = "boolean"
+default = false
+
+[flags.lambda_container_runner]
+env = "LAMBDA_CONTAINER_RUNNER"
+aliases = ["lambda-container-runner"]
+type = "string"
+
+[flags.lambda_container_invoke_timeout_seconds]
+env = "LAMBDA_CONTAINER_INVOKE_TIMEOUT_SECONDS"
+aliases = ["lambda-container-invoke-timeout-seconds"]
+type = "integer"
+
+[flags.lambda_container_memory]
+env = "LAMBDA_CONTAINER_MEMORY"
+aliases = ["lambda-container-memory"]
+type = "string"
+default = "1g"
+
+[flags.lambda_container_memory_bytes]
+env = "LAMBDA_CONTAINER_MEMORY_BYTES"
+aliases = ["lambda-container-memory-bytes"]
+type = "integer"
+default = 1073741824
+
+[flags.lambda_container_cpus]
+env = "LAMBDA_CONTAINER_CPUS"
+aliases = ["lambda-container-cpus"]
+type = "string"
+default = "1.0"
+
+[flags.lambda_container_work_tmpfs_size]
+env = "LAMBDA_CONTAINER_WORK_TMPFS_SIZE"
+aliases = ["lambda-container-work-tmpfs-size"]
+type = "string"
+default = "1g"
+
+# Optional operator fallback for definitions created before architecture became
+# revisioned configuration. New definitions use metadata.runtimeConfig instead.
+[flags.lambda_container_platform]
+env = "LAMBDA_CONTAINER_PLATFORM"
+aliases = ["lambda-container-platform"]
+type = "string"
+
+[flags.lambda_nodejs_container_image]
+env = "LAMBDA_NODEJS_CONTAINER_IMAGE"
+aliases = ["lambda-nodejs-container-image"]
+type = "string"
+
+[flags.lambda_python3_container_image]
+env = "LAMBDA_PYTHON3_CONTAINER_IMAGE"
+aliases = ["lambda-python3-container-image"]
+type = "string"
+
+[flags.lambda_ruby_container_image]
+env = "LAMBDA_RUBY_CONTAINER_IMAGE"
+aliases = ["lambda-ruby-container-image"]
+type = "string"
+
+[flags.lambda_bash_container_image]
+env = "LAMBDA_BASH_CONTAINER_IMAGE"
+aliases = ["lambda-bash-container-image"]
+type = "string"
+
+[flags.lambda_golang_container_image]
+env = "LAMBDA_GOLANG_CONTAINER_IMAGE"
+aliases = ["lambda-golang-container-image"]
+type = "string"
+
+[flags.lambda_dart_container_image]
+env = "LAMBDA_DART_CONTAINER_IMAGE"
+aliases = ["lambda-dart-container-image"]
+type = "string"
+
+[flags.lambda_erlang_container_image]
+env = "LAMBDA_ERLANG_CONTAINER_IMAGE"
+aliases = ["lambda-erlang-container-image"]
+type = "string"
+
+[flags.lambda_elixir_container_image]
+env = "LAMBDA_ELIXIR_CONTAINER_IMAGE"
+aliases = ["lambda-elixir-container-image"]
+type = "string"
+
+[flags.lambda_java_container_image]
+env = "LAMBDA_JAVA_CONTAINER_IMAGE"
+aliases = ["lambda-java-container-image"]
+type = "string"
+
+[flags.lambda_gleam_container_image]
+env = "LAMBDA_GLEAM_CONTAINER_IMAGE"
+aliases = ["lambda-gleam-container-image"]
+type = "string"
+
+[flags.lambda_rust_container_image]
+env = "LAMBDA_RUST_CONTAINER_IMAGE"
+aliases = ["lambda-rust-container-image"]
+type = "string"
+
+[flags.lambda_browser_container_image]
+env = "LAMBDA_BROWSER_CONTAINER_IMAGE"
+aliases = ["lambda-browser-container-image"]
+type = "string"
+
+[flags.lambda_browser_engine]
+env = "LAMBDA_BROWSER_ENGINE"
+aliases = ["lambda-browser-engine"]
+type = "string"
+default = "playwright"
+
+[flags.lambda_browser_container_memory]
+env = "LAMBDA_BROWSER_CONTAINER_MEMORY"
+aliases = ["lambda-browser-container-memory"]
+type = "string"
+default = "1g"
+
+[flags.lambda_browser_container_pids]
+env = "LAMBDA_BROWSER_CONTAINER_PIDS"
+aliases = ["lambda-browser-container-pids"]
+type = "string"
+default = "512"
+
+[flags.lambda_browser_container_shm_size]
+env = "LAMBDA_BROWSER_CONTAINER_SHM_SIZE"
+aliases = ["lambda-browser-container-shm-size"]
+type = "string"
+default = "256m"
+
+[flags.lambda_browser_container_tmpfs_size]
+env = "LAMBDA_BROWSER_CONTAINER_TMPFS_SIZE"
+aliases = ["lambda-browser-container-tmpfs-size"]
+type = "string"
+default = "256m"
+
+[flags.lambda_browser_container_nofile]
+env = "LAMBDA_BROWSER_CONTAINER_NOFILE"
+aliases = ["lambda-browser-container-nofile"]
+type = "string"
+default = "1024"
+
+[flags.lambda_browser_container_memory_bytes]
+env = "LAMBDA_BROWSER_CONTAINER_MEMORY_BYTES"
+aliases = ["lambda-browser-container-memory-bytes"]
+type = "string"
+default = "1073741824"
+
+[flags.lambda_browser_allowed_hosts]
+env = "LAMBDA_BROWSER_ALLOWED_HOSTS"
+aliases = ["lambda-browser-allowed-hosts"]
+type = "string"
+
+[flags.lambda_browser_allow_private_networks]
+env = "LAMBDA_BROWSER_ALLOW_PRIVATE_NETWORKS"
+aliases = ["lambda-browser-allow-private-networks"]
+type = "boolean"
+default = false
+
+[flags.lambda_scraping_user_agent]
+env = "LAMBDA_SCRAPING_USER_AGENT"
+aliases = ["lambda-scraping-user-agent"]
+type = "string"
+
+[flags.lambda_scraping_min_delay_ms]
+env = "LAMBDA_SCRAPING_MIN_DELAY_MS"
+aliases = ["lambda-scraping-min-delay-ms"]
+type = "integer"
+default = 1000
+
+[flags.lambda_scraping_robots_ttl_ms]
+env = "LAMBDA_SCRAPING_ROBOTS_TTL_MS"
+aliases = ["lambda-scraping-robots-ttl-ms"]
+type = "integer"
+default = 3600000
+
+[flags.lambda_scraping_nav_timeout_ms]
+env = "LAMBDA_SCRAPING_NAV_TIMEOUT_MS"
+aliases = ["lambda-scraping-nav-timeout-ms"]
+type = "integer"
+default = 30000
+
+[flags.lambda_scraping_allow_robots_override]
+env = "LAMBDA_SCRAPING_ALLOW_ROBOTS_OVERRIDE"
+aliases = ["lambda-scraping-allow-robots-override"]
+type = "boolean"
+default = false
+
+[flags.lambda_actor_state_max_bytes]
+env = "LAMBDA_ACTOR_STATE_MAX_BYTES"
+aliases = ["lambda-actor-state-max-bytes"]
+type = "integer"
+default = 524288
+
+[flags.actor_engine_enabled]
+env = "ACTOR_ENGINE_ENABLED"
+aliases = ["actor-engine-enabled"]
+type = "boolean"
+default = true
+
+[flags.actor_idle_ms]
+env = "ACTOR_IDLE_MS"
+aliases = ["actor-idle-ms"]
+type = "integer"
+default = 60000
+
+[flags.actor_lease_ms]
+env = "ACTOR_LEASE_MS"
+aliases = ["actor-lease-ms"]
+type = "integer"
+default = 310000
+
+[flags.actor_queue_wait_ms]
+env = "ACTOR_QUEUE_WAIT_MS"
+aliases = ["actor-queue-wait-ms"]
+type = "integer"
+default = 30000
+
+[flags.actor_max_active_per_replica]
+env = "ACTOR_MAX_ACTIVE_PER_REPLICA"
+aliases = ["actor-max-active-per-replica"]
+type = "integer"
+default = 10000
+
+[flags.actor_max_queue_depth]
+env = "ACTOR_MAX_QUEUE_DEPTH"
+aliases = ["actor-max-queue-depth"]
+type = "integer"
+default = 100
+
+[flags.actor_alarm_poll_ms]
+env = "ACTOR_ALARM_POLL_MS"
+aliases = ["actor-alarm-poll-ms"]
+type = "integer"
+default = 1000
+
+[flags.actor_alarm_max_concurrency]
+env = "ACTOR_ALARM_MAX_CONCURRENCY"
+aliases = ["actor-alarm-max-concurrency"]
+type = "integer"
+default = 50
+
+[flags.actor_alarm_timeout_ms]
+env = "ACTOR_ALARM_TIMEOUT_MS"
+aliases = ["actor-alarm-timeout-ms"]
+type = "integer"
+default = 300000
+
+[flags.actor_alarm_error_cooldown_ms]
+env = "ACTOR_ALARM_ERROR_COOLDOWN_MS"
+aliases = ["actor-alarm-error-cooldown-ms"]
+type = "integer"
+default = 5000
+
+[flags.actor_alarm_error_log_interval_ms]
+env = "ACTOR_ALARM_ERROR_LOG_INTERVAL_MS"
+aliases = ["actor-alarm-error-log-interval-ms"]
+type = "integer"
+default = 30000
+
+[flags.runtime_config_service_name]
+env = "RUNTIME_CONFIG_SERVICE_NAME"
+aliases = ["runtime-config-service-name"]
+type = "string"
+
+[flags.runtime_config_scope]
+env = "RUNTIME_CONFIG_SCOPE"
+aliases = ["runtime-config-scope"]
+type = "string"
+
+[flags.runtime_config_env]
+env = "RUNTIME_CONFIG_ENV"
+aliases = ["runtime-config-env"]
+type = "string"
+
+[flags.runtime_config_register_url]
+env = "RUNTIME_CONFIG_REGISTER_URL"
+aliases = ["runtime-config-register-url"]
+type = "string"
+
+[flags.runtime_config_apply_url]
+env = "RUNTIME_CONFIG_APPLY_URL"
+aliases = ["runtime-config-apply-url"]
+type = "string"
