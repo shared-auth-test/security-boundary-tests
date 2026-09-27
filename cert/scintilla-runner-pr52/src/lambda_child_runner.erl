@@ -1,0 +1,2932 @@
+-module(lambda_child_runner).
+
+-export([
+    invoke/5,
+    invoke_qualified/7,
+    invoke_definition/6,
+    invoke_actor_definition/7,
+    invoke_stream/6,
+    invoke_stream_qualified/8,
+    invoke_stream_definition/7,
+    resolve_qualified_reference/3,
+    check_definition/3,
+    metrics/0,
+    worker_counts/0,
+    provisioned_concurrency_for_test/2,
+    worker_pool_for_test/4,
+    destroy/1,
+    container_command_for_test/2,
+    start_manager_link/0,
+    manager_init/0,
+    start_worker_link/1,
+    worker_init/1
+]).
+
+-ifdef(TEST).
+-export([provider_host_command/1, native_host_spawn_spec_for_test/1]).
+-endif.
+
+-define(SERVER, lambda_child_runner_manager).
+-define(WORKERS, lambda_child_runner_workers).
+-define(METRICS, lambda_child_runner_metrics).
+-define(PROVISIONED, lambda_child_runner_provisioned).
+-define(MAX_STREAM_FRAME_BYTES, 524288).
+
+invoke(Command0, Identifier0, Payload0, IdleMs0, TimeoutMs0) ->
+    ensure_tables(),
+    FallbackCommand = to_binary(Command0),
+    Identifier = to_binary(Identifier0),
+    RequestPayload0 = normalize_json_payload(to_binary(Payload0)),
+    RequestPayload = case RequestPayload0 of
+        <<>> -> <<"null">>;
+        _ -> RequestPayload0
+    end,
+    reap_idle(now_ms()),
+    case load_function_reference(Identifier) of
+        {ok, DefinitionJson} ->
+            bump_release_routing(DefinitionJson),
+            invoke_loaded_definition(
+                FallbackCommand,
+                Identifier,
+                DefinitionJson,
+                RequestPayload,
+                IdleMs0,
+                TimeoutMs0
+            );
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+invoke_qualified(
+    Command0,
+    Identifier0,
+    Qualifier0,
+    Affinity0,
+    Payload0,
+    IdleMs0,
+    TimeoutMs0
+) ->
+    ensure_tables(),
+    FallbackCommand = to_binary(Command0),
+    Identifier = to_binary(Identifier0),
+    Qualifier = to_binary(Qualifier0),
+    Affinity = to_binary(Affinity0),
+    RequestPayload = default_request_payload(Payload0),
+    reap_idle(now_ms()),
+    case load_qualified_definition(Identifier, Qualifier, Affinity) of
+        {ok, DefinitionJson} ->
+            bump_release_routing(DefinitionJson),
+            invoke_loaded_definition(
+                FallbackCommand,
+                Identifier,
+                DefinitionJson,
+                RequestPayload,
+                IdleMs0,
+                TimeoutMs0
+            );
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+invoke_definition(Command0, Identifier0, DefinitionJson0, Payload0, IdleMs0, TimeoutMs0) ->
+    ensure_tables(),
+    FallbackCommand = to_binary(Command0),
+    Identifier = to_binary(Identifier0),
+    DefinitionJson = normalize_json_payload(to_binary(DefinitionJson0)),
+    RequestPayload0 = normalize_json_payload(to_binary(Payload0)),
+    RequestPayload = case RequestPayload0 of
+        <<>> -> <<"null">>;
+        _ -> RequestPayload0
+    end,
+    reap_idle(now_ms()),
+    invoke_loaded_definition(
+        FallbackCommand,
+        Identifier,
+        DefinitionJson,
+        RequestPayload,
+        IdleMs0,
+        TimeoutMs0
+    ).
+
+%% Invoke one transaction on a keyed durable actor. Actor calls are always
+%% local, Node.js, single-flight workers: the surrounding OTP actor owns
+%% ordering while lambda_actor_store owns cross-replica lease fencing and
+%% durable state. NATS request/reply cannot preserve that ownership boundary.
+invoke_actor_definition(
+    Command0,
+    Identifier0,
+    DefinitionJson0,
+    ActorJson0,
+    Payload0,
+    IdleMs0,
+    TimeoutMs0
+) ->
+    ensure_tables(),
+    FallbackCommand = to_binary(Command0),
+    Identifier = to_binary(Identifier0),
+    DefinitionJson = normalize_json_payload(to_binary(DefinitionJson0)),
+    ActorJson = normalize_json_payload(to_binary(ActorJson0)),
+    RequestPayload = default_request_payload(Payload0),
+    reap_idle(now_ms()),
+    case {runtime_from_definition(DefinitionJson), pool_dispatch_target(DefinitionJson)} of
+        {<<"nodejs">>, false} ->
+            case command_for_definition(FallbackCommand, DefinitionJson) of
+                {ok, Command} ->
+                    ActorId = json_string_field(ActorJson, <<"id">>),
+                    ActorKey = json_string_field(ActorJson, <<"key">>),
+                    case ActorId =/= <<>> andalso ActorKey =/= <<>> of
+                        true ->
+                            IdleMs = max_int(IdleMs0, 1000),
+                            TimeoutMs = timeout_ms_from_definition(
+                                DefinitionJson,
+                                TimeoutMs0
+                            ),
+                            invoke_worker(
+                                Command,
+                                actor_worker_key(Identifier, ActorKey),
+                                actor_invocation_payload(
+                                    Identifier,
+                                    DefinitionJson,
+                                    ActorJson,
+                                    RequestPayload
+                                ),
+                                IdleMs,
+                                TimeoutMs,
+                                1
+                            );
+                        false ->
+                            {error, <<"actor id and key are required">>}
+                    end;
+                {error, Reason} ->
+                    {error, Reason}
+            end;
+        {<<"nodejs">>, _PoolTarget} ->
+            {error, <<"durable actors do not support NATS container-pool dispatch">>};
+        {_Runtime, _PoolTarget} ->
+            {error, <<"durable actors currently require the nodejs runtime">>}
+    end.
+
+%% Stream one Node.js invocation through a callback. The callback is
+%% invoked synchronously for every decoded binary chunk; the HTTP bridge does
+%% not acknowledge it until that chunk has reached the client socket, so
+%% backpressure propagates through the BEAM worker and OS pipe to user code.
+invoke_stream(Command0, Identifier0, Payload0, IdleMs0, TimeoutMs0, Emit) ->
+    ensure_tables(),
+    FallbackCommand = to_binary(Command0),
+    Identifier = to_binary(Identifier0),
+    RequestPayload = default_request_payload(Payload0),
+    reap_idle(now_ms()),
+    case load_function_reference(Identifier) of
+        {ok, DefinitionJson} ->
+            bump_release_routing(DefinitionJson),
+            invoke_loaded_definition_stream(
+                FallbackCommand,
+                Identifier,
+                DefinitionJson,
+                RequestPayload,
+                IdleMs0,
+                TimeoutMs0,
+                Emit
+            );
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+invoke_stream_qualified(
+    Command0,
+    Identifier0,
+    Qualifier0,
+    Affinity0,
+    Payload0,
+    IdleMs0,
+    TimeoutMs0,
+    Emit
+) ->
+    ensure_tables(),
+    FallbackCommand = to_binary(Command0),
+    Identifier = to_binary(Identifier0),
+    Qualifier = to_binary(Qualifier0),
+    Affinity = to_binary(Affinity0),
+    RequestPayload = default_request_payload(Payload0),
+    reap_idle(now_ms()),
+    case load_qualified_definition(Identifier, Qualifier, Affinity) of
+        {ok, DefinitionJson} ->
+            bump_release_routing(DefinitionJson),
+            invoke_loaded_definition_stream(
+                FallbackCommand,
+                Identifier,
+                DefinitionJson,
+                RequestPayload,
+                IdleMs0,
+                TimeoutMs0,
+                Emit
+            );
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+%% Definition-injected variant used by behavioral tests and trusted internal
+%% callers that already resolved an immutable definition snapshot.
+invoke_stream_definition(
+    Command0,
+    Identifier0,
+    DefinitionJson0,
+    Payload0,
+    IdleMs0,
+    TimeoutMs0,
+    Emit
+) ->
+    ensure_tables(),
+    FallbackCommand = to_binary(Command0),
+    Identifier = to_binary(Identifier0),
+    DefinitionJson = normalize_json_payload(to_binary(DefinitionJson0)),
+    RequestPayload = default_request_payload(Payload0),
+    reap_idle(now_ms()),
+    invoke_loaded_definition_stream(
+        FallbackCommand,
+        Identifier,
+        DefinitionJson,
+        RequestPayload,
+        IdleMs0,
+        TimeoutMs0,
+        Emit
+    ).
+
+check_definition(Command0, DefinitionJson0, TimeoutMs0) ->
+    ensure_tables(),
+    FallbackCommand = to_binary(Command0),
+    DefinitionJson = normalize_json_payload(to_binary(DefinitionJson0)),
+    case command_for_definition(FallbackCommand, DefinitionJson) of
+        {ok, Command} ->
+            Runtime = runtime_from_definition(DefinitionJson),
+            Containerized = json_bool_field(DefinitionJson, <<"containerized">>, false),
+            Payload = check_payload(DefinitionJson),
+            invoke_worker(
+                Command,
+                check_worker_key(Runtime, Containerized),
+                Payload,
+                30000,
+                max_int(TimeoutMs0, 1000),
+                default_max_concurrency()
+            );
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+invoke_loaded_definition(FallbackCommand, Identifier, DefinitionJson, RequestPayload, IdleMs0, TimeoutMs0) ->
+    bump(invocations_total, 1),
+    case pool_dispatch_target(DefinitionJson) of
+        {ok, Subject, PoolSlug} ->
+            dispatch_via_pool(
+                Subject, PoolSlug, FallbackCommand, Identifier,
+                DefinitionJson, RequestPayload, IdleMs0, TimeoutMs0
+            );
+        {error, Reason} ->
+            {error, Reason};
+        false ->
+            invoke_loaded_definition_local(
+                FallbackCommand, Identifier, DefinitionJson,
+                RequestPayload, IdleMs0, TimeoutMs0
+            )
+    end.
+
+%% Procure a warm container from dd-container-pool over NATS instead of spawning
+%% a child locally. The pool leases an idle warm worker, posts the lambda
+%% invocation envelope to it, and returns the worker's response body. On any
+%% transport/pool failure we optionally fall back to local execution so a pool
+%% outage degrades latency rather than availability.
+dispatch_via_pool(Subject, PoolSlug, FallbackCommand, Identifier, DefinitionJson, RequestPayload, IdleMs0, TimeoutMs0) ->
+    bump(pool_dispatch_total, 1),
+    TimeoutMs = timeout_ms_from_definition(DefinitionJson, TimeoutMs0),
+    Payload = invocation_payload(Identifier, DefinitionJson, RequestPayload),
+    case lambda_nats:pool_dispatch(Subject, PoolSlug, Identifier, Payload, TimeoutMs) of
+        {ok, Output} ->
+            {ok, Output};
+        {error, Reason} ->
+            bump(pool_dispatch_failures_total, 1),
+            case pool_fallback_local() of
+                true ->
+                    io:format(
+                        "lambda pool dispatch failed (~s); falling back to local execution~n",
+                        [safe_label(Reason)]
+                    ),
+                    invoke_loaded_definition_local(
+                        FallbackCommand, Identifier, DefinitionJson,
+                        RequestPayload, IdleMs0, TimeoutMs0
+                    );
+                false ->
+                    {error, Reason}
+            end
+    end.
+
+invoke_loaded_definition_local(FallbackCommand, Identifier, DefinitionJson, RequestPayload, IdleMs0, TimeoutMs0) ->
+    case command_for_definition(FallbackCommand, DefinitionJson) of
+        {ok, Command} ->
+            Runtime = runtime_from_definition(DefinitionJson),
+            Containerized = json_bool_field(DefinitionJson, <<"containerized">>, false),
+            case worker_pool(Identifier, DefinitionJson, Runtime, Containerized) of
+                {ok, PoolKey, MaxConcurrency} ->
+                    IdleMs = idle_ms_from_definition(DefinitionJson, IdleMs0),
+                    TimeoutMs = timeout_ms_from_definition(DefinitionJson, TimeoutMs0),
+                    Provisioned = provisioned_concurrency_from_definition(
+                        DefinitionJson,
+                        MaxConcurrency
+                    ),
+                    _ = ensure_provisioned_workers(
+                        Command,
+                        PoolKey,
+                        IdleMs,
+                        Provisioned
+                    ),
+                    Payload = invocation_payload(Identifier, DefinitionJson, RequestPayload),
+                    invoke_worker(
+                        Command,
+                        PoolKey,
+                        Payload,
+                        IdleMs,
+                        TimeoutMs,
+                        MaxConcurrency
+                    );
+                {error, Reason} ->
+                    {error, Reason}
+            end;
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+invoke_loaded_definition_stream(
+    FallbackCommand,
+    Identifier,
+    DefinitionJson,
+    RequestPayload,
+    IdleMs0,
+    TimeoutMs0,
+    Emit
+) when is_function(Emit, 1) ->
+    bump(invocations_total, 1),
+    bump(stream_invocations_total, 1),
+    case pool_dispatch_target(DefinitionJson) of
+        {ok, _Subject, _PoolSlug} ->
+            bump(stream_failures_total, 1),
+            {error, <<"response streaming is unavailable for pool-backed functions">>};
+        {error, Reason} ->
+            bump(stream_failures_total, 1),
+            {error, Reason};
+        false ->
+            Runtime = runtime_from_definition(DefinitionJson),
+            case Runtime =:= <<"nodejs">> of
+                false ->
+                    bump(stream_failures_total, 1),
+                    {error, <<"response streaming currently requires the nodejs runtime">>};
+                true ->
+                    invoke_loaded_definition_stream_local(
+                        FallbackCommand,
+                        Identifier,
+                        DefinitionJson,
+                        RequestPayload,
+                        IdleMs0,
+                        TimeoutMs0,
+                        Emit,
+                        Runtime
+                    )
+            end
+    end;
+invoke_loaded_definition_stream(
+    _FallbackCommand,
+    _Identifier,
+    _DefinitionJson,
+    _RequestPayload,
+    _IdleMs0,
+    _TimeoutMs0,
+    _Emit
+) ->
+    {error, <<"stream callback is required">>}.
+
+invoke_loaded_definition_stream_local(
+    FallbackCommand,
+    Identifier,
+    DefinitionJson,
+    RequestPayload,
+    IdleMs0,
+    TimeoutMs0,
+    Emit,
+    Runtime
+) ->
+    case command_for_definition(FallbackCommand, DefinitionJson) of
+        {ok, Command} ->
+            Containerized = json_bool_field(DefinitionJson, <<"containerized">>, false),
+            case worker_pool(Identifier, DefinitionJson, Runtime, Containerized) of
+                {ok, PoolKey, MaxConcurrency} ->
+                    IdleMs = idle_ms_from_definition(DefinitionJson, IdleMs0),
+                    TimeoutMs = timeout_ms_from_definition(DefinitionJson, TimeoutMs0),
+                    Provisioned = provisioned_concurrency_from_definition(
+                        DefinitionJson,
+                        MaxConcurrency
+                    ),
+                    _ = ensure_provisioned_workers(
+                        Command,
+                        PoolKey,
+                        IdleMs,
+                        Provisioned
+                    ),
+                    Payload = stream_invocation_payload(
+                        Identifier,
+                        DefinitionJson,
+                        RequestPayload
+                    ),
+                    invoke_stream_worker(
+                        Command,
+                        PoolKey,
+                        Payload,
+                        IdleMs,
+                        TimeoutMs,
+                        MaxConcurrency,
+                        stream_max_bytes(),
+                        Emit
+                    );
+                {error, Reason} ->
+                    bump(stream_failures_total, 1),
+                    {error, Reason}
+            end;
+        {error, Reason} ->
+            bump(stream_failures_total, 1),
+            {error, Reason}
+    end.
+
+%% Resolve the container-pool dispatch target for a definition, or `false` when
+%% the function should run locally. Pool routing is opt-in per definition via the
+%% `poolBacked` field (commonly carried in meta_data_json) or globally via the
+%% LAMBDA_POOL_DISPATCH_DEFAULT env. The request subject is sourced from the
+%% generated NATS subject defs so a schema rename surfaces at build time.
+pool_dispatch_target(DefinitionJson) ->
+    PoolBacked = pool_backed(DefinitionJson),
+    case lambda_execution_backend:pool_dispatch_policy(PoolBacked) of
+        local ->
+            false;
+        native_pool ->
+            Runtime = runtime_from_definition(DefinitionJson),
+            Language = pool_language(DefinitionJson, Runtime),
+            case safe_pool_language(Language) of
+                false ->
+                    {error, iolist_to_binary(["invalid pool language token: ", Language])};
+                true ->
+                    case pool_subject(DefinitionJson, Language) of
+                        {ok, Subject} ->
+                            case pool_slug(DefinitionJson) of
+                                {ok, PoolSlug} -> {ok, Subject, PoolSlug};
+                                {error, Reason} -> {error, Reason}
+                            end;
+                        {error, Reason} ->
+                            {error, Reason}
+                    end
+            end;
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+pool_backed(DefinitionJson) ->
+    json_bool_field(
+        DefinitionJson,
+        <<"poolBacked">>,
+        env_bool("LAMBDA_POOL_DISPATCH_DEFAULT", false)
+    ).
+
+pool_language(DefinitionJson, Runtime) ->
+    case json_string_field(DefinitionJson, <<"poolLanguage">>) of
+        <<>> -> Runtime;
+        Language -> Language
+    end.
+
+pool_slug(DefinitionJson) ->
+    case json_string_field(DefinitionJson, <<"poolSlug">>) of
+        <<>> ->
+            {ok, <<>>};
+        Slug ->
+            case safe_pool_slug(Slug) of
+                true -> {ok, Slug};
+                false -> {error, <<"poolSlug contains unsupported characters">>}
+            end
+    end.
+
+%% Resolve the request subject and validate it as a publishable NATS subject.
+%% The generated default is always safe; the poolSubject/env overrides are
+%% operator-supplied and must not be able to smuggle whitespace or CRLF into the
+%% NATS PUB line (wire-protocol injection).
+pool_subject(DefinitionJson, Language) ->
+    Subject = case json_string_field(DefinitionJson, <<"poolSubject">>) of
+        <<>> ->
+            case env_binary("LAMBDA_POOL_SUBJECT", <<>>) of
+                <<>> -> pool_requests_subject(Language);
+                EnvSubject -> EnvSubject
+            end;
+        DefSubject ->
+            DefSubject
+    end,
+    case safe_nats_subject(Subject) of
+        true -> {ok, Subject};
+        false -> {error, <<"pool subject is not a valid NATS subject">>}
+    end.
+
+%% Build dd.remote.container_pool.<language>.requests from the generated wildcard
+%% (dd.remote.container_pool.*.requests) so the prefix can never drift from the
+%% pool service's owned subject.
+pool_requests_subject(Language) ->
+    Wildcard = dd_nats_subject_consts:container_pool_language_requests_wildcard(),
+    binary:replace(Wildcard, <<"*">>, Language).
+
+pool_fallback_local() ->
+    env_bool("LAMBDA_POOL_FALLBACK_LOCAL", true).
+
+safe_pool_language(Language) ->
+    re:run(Language, "^[A-Za-z0-9_-]{1,64}$", [{capture, none}]) =:= match.
+
+safe_pool_slug(Slug) ->
+    re:run(Slug, "^[A-Za-z0-9._:-]{1,119}$", [{capture, none}]) =:= match.
+
+%% Dot-separated tokens of subject-safe characters; no spaces, CRLF, null, or
+%% publish-illegal wildcards (`*`/`>`).
+safe_nats_subject(Subject) ->
+    re:run(Subject, "^[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*$", [{capture, none}]) =:= match.
+
+env_bool(Name, Default) ->
+    case env_binary(Name, <<>>) of
+        <<"true">> -> true;
+        <<"1">> -> true;
+        <<"false">> -> false;
+        <<"0">> -> false;
+        _ -> Default
+    end.
+
+invoke_worker(Command, PoolKey, Payload, IdleMs, TimeoutMs, MaxConcurrency) ->
+    case acquire_worker(Command, PoolKey, IdleMs, MaxConcurrency) of
+        {ok, Pid, WorkerKey, LeaseRef} ->
+            Ref = make_ref(),
+            Monitor = erlang:monitor(process, Pid),
+            Pid ! {invoke, self(), Ref, Payload},
+            receive
+                {Ref, {ok, Data}} ->
+                    erlang:demonitor(Monitor, [flush]),
+                    byte_bump(child_stdio_bytes_total, Data),
+                    io:format(
+                        "lambda_child_stdio pool_key=~s bytes=~p~n",
+                        [safe_label(PoolKey), byte_size(Data)]
+                    ),
+                    release_worker(WorkerKey, LeaseRef),
+                    {ok, Data};
+                {Ref, {exit_status, Status}} ->
+                    erlang:demonitor(Monitor, [flush]),
+                    remove_worker(WorkerKey, LeaseRef),
+                    bump(child_exits_total, 1),
+                    {error, iolist_to_binary(io_lib:format("child exited with status ~p", [Status]))};
+                {Ref, {error, Reason}} ->
+                    erlang:demonitor(Monitor, [flush]),
+                    remove_worker(WorkerKey, LeaseRef),
+                    {error, Reason};
+                {'DOWN', Monitor, process, Pid, Reason} ->
+                    remove_worker(WorkerKey, LeaseRef),
+                    bump(child_exits_total, 1),
+                    {error, iolist_to_binary(io_lib:format("child worker exited: ~p", [Reason]))}
+            after TimeoutMs ->
+                Pid ! stop,
+                erlang:demonitor(Monitor, [flush]),
+                remove_worker(WorkerKey, LeaseRef),
+                bump(invocation_timeouts_total, 1),
+                {error, <<"lambda child process timed out">>}
+            end;
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+invoke_stream_worker(
+    Command,
+    PoolKey,
+    Payload,
+    IdleMs,
+    TimeoutMs,
+    MaxConcurrency,
+    MaxBytes,
+    Emit
+) ->
+    case acquire_worker(Command, PoolKey, IdleMs, MaxConcurrency) of
+        {ok, Pid, WorkerKey, LeaseRef} ->
+            Ref = make_ref(),
+            Monitor = erlang:monitor(process, Pid),
+            Pid ! {invoke_stream, self(), Ref, Payload, MaxBytes, Emit},
+            receive
+                {Ref, {ok, Bytes, Chunks}} ->
+                    erlang:demonitor(Monitor, [flush]),
+                    bump(stream_bytes_total, Bytes),
+                    bump(stream_chunks_total, Chunks),
+                    release_worker(WorkerKey, LeaseRef),
+                    {ok, Bytes};
+                {Ref, {stream_error, Reason, Bytes, Chunks}} ->
+                    erlang:demonitor(Monitor, [flush]),
+                    bump(stream_bytes_total, Bytes),
+                    bump(stream_chunks_total, Chunks),
+                    bump(stream_failures_total, 1),
+                    release_worker(WorkerKey, LeaseRef),
+                    {error, Reason};
+                {Ref, {error, Reason}} ->
+                    erlang:demonitor(Monitor, [flush]),
+                    bump(stream_failures_total, 1),
+                    remove_worker(WorkerKey, LeaseRef),
+                    {error, Reason};
+                {'DOWN', Monitor, process, Pid, Reason} ->
+                    bump(stream_failures_total, 1),
+                    remove_worker(WorkerKey, LeaseRef),
+                    bump(child_exits_total, 1),
+                    {error, iolist_to_binary(io_lib:format(
+                        "streaming child worker exited: ~p",
+                        [Reason]
+                    ))}
+            after TimeoutMs ->
+                Pid ! stop,
+                erlang:demonitor(Monitor, [flush]),
+                remove_worker(WorkerKey, LeaseRef),
+                bump(invocation_timeouts_total, 1),
+                bump(stream_failures_total, 1),
+                {error, <<"lambda streaming process timed out">>}
+            end;
+        {error, Reason} ->
+            bump(stream_failures_total, 1),
+            {error, Reason}
+    end.
+
+metrics() ->
+    ensure_tables(),
+    Counts = worker_counts(),
+    ActiveWorkers = maps:get(active, Counts, 0),
+    BusyWorkers = maps:get(busy, Counts, 0),
+    IdleWorkers = maps:get(idle, Counts, 0),
+    ProvisionedWorkers = maps:get(provisioned, Counts, 0),
+    iolist_to_binary([
+        "# HELP dd_lambda_runner_invocations_total Lambda invocations handled by the Gleam runner.\n",
+        "# TYPE dd_lambda_runner_invocations_total counter\n",
+        metric_line("dd_lambda_runner_invocations_total", get_metric(invocations_total)),
+        "# HELP dd_lambda_runner_child_spawns_total Child processes spawned by the Gleam runner.\n",
+        "# TYPE dd_lambda_runner_child_spawns_total counter\n",
+        metric_line("dd_lambda_runner_child_spawns_total", get_metric(child_spawns_total)),
+        "# HELP dd_lambda_runner_child_reuses_total Child process reuse hits.\n",
+        "# TYPE dd_lambda_runner_child_reuses_total counter\n",
+        metric_line("dd_lambda_runner_child_reuses_total", get_metric(child_reuses_total)),
+        "# HELP dd_lambda_runner_child_destroys_total Child processes destroyed by idle reaping or command changes.\n",
+        "# TYPE dd_lambda_runner_child_destroys_total counter\n",
+        metric_line("dd_lambda_runner_child_destroys_total", get_metric(child_destroys_total)),
+        "# HELP dd_lambda_runner_child_exits_total Child processes that exited during invocation.\n",
+        "# TYPE dd_lambda_runner_child_exits_total counter\n",
+        metric_line("dd_lambda_runner_child_exits_total", get_metric(child_exits_total)),
+        "# HELP dd_lambda_runner_invocation_timeouts_total Lambda child invocations that timed out.\n",
+        "# TYPE dd_lambda_runner_invocation_timeouts_total counter\n",
+        metric_line("dd_lambda_runner_invocation_timeouts_total", get_metric(invocation_timeouts_total)),
+        "# HELP dd_lambda_runner_child_stdio_bytes_total Bytes read from child process stdio.\n",
+        "# TYPE dd_lambda_runner_child_stdio_bytes_total counter\n",
+        metric_line("dd_lambda_runner_child_stdio_bytes_total", get_metric(child_stdio_bytes_total)),
+        "# HELP dd_lambda_runner_pool_dispatch_total Invocations dispatched to dd-container-pool over NATS.\n",
+        "# TYPE dd_lambda_runner_pool_dispatch_total counter\n",
+        metric_line("dd_lambda_runner_pool_dispatch_total", get_metric(pool_dispatch_total)),
+        "# HELP dd_lambda_runner_pool_dispatch_failures_total Container-pool dispatches that failed (before any local fallback).\n",
+        "# TYPE dd_lambda_runner_pool_dispatch_failures_total counter\n",
+        metric_line("dd_lambda_runner_pool_dispatch_failures_total", get_metric(pool_dispatch_failures_total)),
+        "# HELP dd_lambda_runner_concurrency_rejections_total Invocations rejected immediately because a local worker pool reached its limit.\n",
+        "# TYPE dd_lambda_runner_concurrency_rejections_total counter\n",
+        metric_line(
+            "dd_lambda_runner_concurrency_rejections_total",
+            get_metric(concurrency_rejections_total)
+        ),
+        "# HELP dd_lambda_runner_abandoned_leases_total Busy workers terminated after their invocation owner exited.\n",
+        "# TYPE dd_lambda_runner_abandoned_leases_total counter\n",
+        metric_line(
+            "dd_lambda_runner_abandoned_leases_total",
+            get_metric(abandoned_leases_total)
+        ),
+        "# HELP dd_lambda_runner_stream_invocations_total Streaming invocations started.\n",
+        "# TYPE dd_lambda_runner_stream_invocations_total counter\n",
+        metric_line(
+            "dd_lambda_runner_stream_invocations_total",
+            get_metric(stream_invocations_total)
+        ),
+        "# HELP dd_lambda_runner_stream_chunks_total Backpressured response chunks delivered to HTTP streams.\n",
+        "# TYPE dd_lambda_runner_stream_chunks_total counter\n",
+        metric_line(
+            "dd_lambda_runner_stream_chunks_total",
+            get_metric(stream_chunks_total)
+        ),
+        "# HELP dd_lambda_runner_stream_bytes_total Streaming response bytes delivered to HTTP streams.\n",
+        "# TYPE dd_lambda_runner_stream_bytes_total counter\n",
+        metric_line(
+            "dd_lambda_runner_stream_bytes_total",
+            get_metric(stream_bytes_total)
+        ),
+        "# HELP dd_lambda_runner_stream_failures_total Streaming invocations that failed or were interrupted.\n",
+        "# TYPE dd_lambda_runner_stream_failures_total counter\n",
+        metric_line(
+            "dd_lambda_runner_stream_failures_total",
+            get_metric(stream_failures_total)
+        ),
+        "# HELP dd_lambda_runner_release_routed_invocations_total Invocations pinned to immutable published revisions.\n",
+        "# TYPE dd_lambda_runner_release_routed_invocations_total counter\n",
+        metric_line(
+            "dd_lambda_runner_release_routed_invocations_total",
+            get_metric(release_routed_invocations_total)
+        ),
+        "# HELP dd_lambda_runner_alias_routed_invocations_total Invocations selected through weighted aliases.\n",
+        "# TYPE dd_lambda_runner_alias_routed_invocations_total counter\n",
+        metric_line(
+            "dd_lambda_runner_alias_routed_invocations_total",
+            get_metric(alias_routed_invocations_total)
+        ),
+        "# HELP dd_lambda_runner_revision_routed_invocations_total Invocations addressed by a concrete revision number.\n",
+        "# TYPE dd_lambda_runner_revision_routed_invocations_total counter\n",
+        metric_line(
+            "dd_lambda_runner_revision_routed_invocations_total",
+            get_metric(revision_routed_invocations_total)
+        ),
+        "# HELP dd_lambda_runner_active_workers Active reusable child processes.\n",
+        "# TYPE dd_lambda_runner_active_workers gauge\n",
+        metric_line("dd_lambda_runner_active_workers", ActiveWorkers),
+        "# HELP dd_lambda_runner_busy_workers Supervised child processes with an active invocation lease.\n",
+        "# TYPE dd_lambda_runner_busy_workers gauge\n",
+        metric_line("dd_lambda_runner_busy_workers", BusyWorkers),
+        "# HELP dd_lambda_runner_idle_workers Supervised child processes immediately available for work.\n",
+        "# TYPE dd_lambda_runner_idle_workers gauge\n",
+        metric_line("dd_lambda_runner_idle_workers", IdleWorkers),
+        "# HELP dd_lambda_runner_provisioned_workers Supervised workers retained to satisfy per-function provisioned concurrency.\n",
+        "# TYPE dd_lambda_runner_provisioned_workers gauge\n",
+        metric_line("dd_lambda_runner_provisioned_workers", ProvisionedWorkers)
+    ]).
+
+worker_counts() ->
+    case ets:info(?WORKERS) of
+        undefined ->
+            #{active => 0, busy => 0, idle => 0, provisioned => 0};
+        _ ->
+            lists:foldl(
+                fun({_WorkerKey, Worker}, Counts) ->
+                    Busy = maps:get(busy, Worker, false),
+                    Counts#{
+                        active := maps:get(active, Counts) + 1,
+                        busy := maps:get(busy, Counts) + bool_int(Busy),
+                        idle := maps:get(idle, Counts) + bool_int(not Busy),
+                        provisioned := maps:get(provisioned, Counts) +
+                            bool_int(maps:get(provisioned, Worker, false))
+                    }
+                end,
+                #{active => 0, busy => 0, idle => 0, provisioned => 0},
+                ets:tab2list(?WORKERS)
+            )
+    end.
+
+destroy(PoolKey0) ->
+    ensure_tables(),
+    manager_call({destroy_pool, to_binary(PoolKey0)}).
+
+load_function_reference(Reference) ->
+    case split_function_reference(Reference) of
+        {ok, Identifier, <<>>} ->
+            load_function_definition(Identifier);
+        {ok, Identifier, Qualifier} ->
+            load_qualified_definition(Identifier, Qualifier, <<>>);
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+load_function_definition(Identifier) ->
+    case identifier_kind(Identifier) of
+        invalid ->
+            {error, <<"valid lambda function UUID or slug is required">>};
+        Kind ->
+            case database_url() of
+                {ok, DatabaseUrl} ->
+                    load_function_definition(Kind, Identifier, DatabaseUrl);
+                {error, Reason} ->
+                    {error, Reason}
+            end
+    end.
+
+load_qualified_definition(Identifier, Qualifier, Affinity) ->
+    case revision_routing_enabled() of
+        false ->
+            {error, <<"lambda revision routing is unavailable">>};
+        true ->
+            load_qualified_definition_enabled(Identifier, Qualifier, Affinity)
+    end.
+
+load_qualified_definition_enabled(Identifier, Qualifier, Affinity) ->
+    case {identifier_kind(Identifier), qualifier_kind(Qualifier), safe_affinity(Affinity)} of
+        {invalid, _QualifierKind, _SafeAffinity} ->
+            {error, <<"valid lambda function UUID or slug is required">>};
+        {_IdentifierKind, invalid, _SafeAffinity} ->
+            {error, <<"valid lambda revision number or alias is required">>};
+        {_IdentifierKind, _QualifierKind, false} ->
+            {error, <<"lambda routing affinity exceeds 512 bytes">>};
+        {_IdentifierKind, latest, true} ->
+            load_function_definition(Identifier);
+        {IdentifierKind, {revision, RevisionNumber}, true} ->
+            load_revision_definition(
+                IdentifierKind,
+                Identifier,
+                RevisionNumber
+            );
+        {IdentifierKind, alias, true} ->
+            load_alias_definition(
+                IdentifierKind,
+                Identifier,
+                Qualifier,
+                affinity_bucket(Identifier, Qualifier, Affinity)
+            )
+    end.
+
+resolve_qualified_reference(Identifier0, Qualifier0, Affinity0) ->
+    Identifier = to_binary(Identifier0),
+    Qualifier = to_binary(Qualifier0),
+    Affinity = to_binary(Affinity0),
+    case load_qualified_definition(Identifier, Qualifier, Affinity) of
+        {ok, DefinitionJson} ->
+            FunctionId = json_string_field(DefinitionJson, <<"functionId">>),
+            RevisionNumber = json_int_field(
+                DefinitionJson,
+                <<"revisionNumber">>,
+                0
+            ),
+            case FunctionId =/= <<>> andalso RevisionNumber > 0 of
+                true ->
+                    {ok, iolist_to_binary([
+                        FunctionId,
+                        "@",
+                        integer_to_binary(RevisionNumber)
+                    ])};
+                false ->
+                    {error, <<"qualified release did not resolve an immutable revision">>}
+            end;
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+load_function_definition(Kind, Identifier, DatabaseUrl) ->
+    case os:find_executable("psql") of
+        false ->
+            {error, <<"psql executable not found">>};
+        Psql ->
+            Sql = lambda_definition_sql(Kind, Identifier),
+            run_definition_query(Psql, DatabaseUrl, Sql, Identifier)
+    end.
+
+lambda_definition_sql(Kind, Identifier) ->
+    SelectSql = 'gleam_lambda_runner@pg_contract':lambda_functions_select_sql(),
+    iolist_to_binary([
+        "select jsonb_build_object(",
+        "'id', id,",
+        "'functionId', id,",
+        "'slug', slug,",
+        "'functionBody', function_body,",
+        "'runtime', runtime,",
+        "'entryCommand', entry_command,",
+        "'reuseKey', reuse_key,",
+        "'idleTimeoutSeconds', idle_timeout_seconds,",
+        "'maxRunMs', max_run_ms,",
+        "'containerized', containerized,",
+        "'containerImage', container_image,",
+        "'containerBuildStatus', container_build_status,",
+        "'containerBuildError', container_build_error,",
+        "'containerBuiltAt', container_built_at,",
+        "'status', status,",
+        "'labels', labels_json::jsonb,",
+        "'metaData', meta_data_json::jsonb,",
+        "'releaseMode', 'latest'",
+        ")::text ",
+        "from (",
+        SelectSql,
+        ") as lambda_function_row ",
+        "where ",
+        identifier_where_clause(Kind, Identifier),
+        " ",
+        "and is_soft_deleted = false ",
+        "limit 1"
+    ]).
+
+load_revision_definition(Kind, Identifier, RevisionNumber) ->
+    case database_url() of
+        {error, Reason} ->
+            {error, Reason};
+        {ok, DatabaseUrl} ->
+            case os:find_executable("psql") of
+                false ->
+                    {error, <<"psql executable not found">>};
+                Psql ->
+                    Sql = lambda_revision_definition_sql(
+                        Kind,
+                        Identifier,
+                        RevisionNumber
+                    ),
+                    run_definition_query(Psql, DatabaseUrl, Sql, Identifier)
+            end
+    end.
+
+lambda_revision_definition_sql(Kind, Identifier, RevisionNumber) ->
+    iolist_to_binary([
+        "select jsonb_build_object(",
+        "'id', f.id,",
+        "'functionId', f.id,",
+        "'slug', f.slug,",
+        "'functionBody', r.function_body,",
+        "'runtime', r.runtime,",
+        "'entryCommand', r.entry_command,",
+        "'reuseKey', r.reuse_key,",
+        "'idleTimeoutSeconds', r.idle_timeout_seconds,",
+        "'maxRunMs', r.max_run_ms,",
+        "'containerized', r.containerized,",
+        "'containerImage', r.container_image,",
+        "'containerBuildStatus', r.container_build_status,",
+        "'containerBuildError', r.container_build_error,",
+        "'containerBuiltAt', r.container_built_at,",
+        "'status', f.status,",
+        "'labels', r.labels,",
+        "'metaData', r.meta_data,",
+        "'releaseMode', 'revision',",
+        "'qualifier', r.revision_number::text,",
+        "'revisionId', r.id,",
+        "'revisionNumber', r.revision_number,",
+        "'definitionDigest', r.definition_digest",
+        ")::text ",
+        "from lambda_functions f ",
+        "join lambda_function_revisions r on r.function_id = f.id ",
+        "where ",
+        qualified_identifier_where_clause(Kind, Identifier, "f"),
+        " and f.is_soft_deleted = false ",
+        "and f.status = 'active' ",
+        "and r.revision_number = ",
+        integer_to_binary(RevisionNumber),
+        " limit 1"
+    ]).
+
+load_alias_definition(Kind, Identifier, Alias, Bucket) ->
+    case database_url() of
+        {error, Reason} ->
+            {error, Reason};
+        {ok, DatabaseUrl} ->
+            case os:find_executable("psql") of
+                false ->
+                    {error, <<"psql executable not found">>};
+                Psql ->
+                    Sql = lambda_alias_definition_sql(
+                        Kind,
+                        Identifier,
+                        Alias,
+                        Bucket
+                    ),
+                    run_definition_query(Psql, DatabaseUrl, Sql, Identifier)
+            end
+    end.
+
+lambda_alias_definition_sql(Kind, Identifier, Alias, Bucket) ->
+    iolist_to_binary([
+        "with function_row as (",
+        "select f.id, f.slug, f.status from lambda_functions f where ",
+        qualified_identifier_where_clause(Kind, Identifier, "f"),
+        " and f.is_soft_deleted = false and f.status = 'active' limit 1",
+        "), alias_row as (",
+        "select a.* from lambda_function_aliases a ",
+        "join function_row f on f.id = a.function_id ",
+        "where a.name = '", Alias, "' limit 1",
+        "), weighted as (",
+        "select r.*, (target.value::text)::integer as weight_bps, ",
+        "sum((target.value::text)::integer) over ",
+        "(order by r.revision_number, r.id) as cumulative_weight ",
+        "from alias_row a ",
+        "cross join lateral jsonb_each(a.traffic) target ",
+        "join lambda_function_revisions r ",
+        "on r.id = target.key::uuid and r.function_id = a.function_id",
+        "), chosen as (",
+        "select * from weighted where ",
+        integer_to_binary(Bucket),
+        " >= cumulative_weight - weight_bps and ",
+        integer_to_binary(Bucket),
+        " < cumulative_weight limit 1",
+        ") select jsonb_build_object(",
+        "'id', f.id,",
+        "'functionId', f.id,",
+        "'slug', f.slug,",
+        "'functionBody', r.function_body,",
+        "'runtime', r.runtime,",
+        "'entryCommand', r.entry_command,",
+        "'reuseKey', r.reuse_key,",
+        "'idleTimeoutSeconds', r.idle_timeout_seconds,",
+        "'maxRunMs', r.max_run_ms,",
+        "'containerized', r.containerized,",
+        "'containerImage', r.container_image,",
+        "'containerBuildStatus', r.container_build_status,",
+        "'containerBuildError', r.container_build_error,",
+        "'containerBuiltAt', r.container_built_at,",
+        "'status', f.status,",
+        "'labels', r.labels,",
+        "'metaData', r.meta_data,",
+        "'releaseMode', 'alias',",
+        "'qualifier', a.name,",
+        "'alias', a.name,",
+        "'routingVersion', a.routing_version,",
+        "'routingBucket', ",
+        integer_to_binary(Bucket),
+        ", 'revisionId', r.id,",
+        "'revisionNumber', r.revision_number,",
+        "'definitionDigest', r.definition_digest",
+        ")::text from function_row f ",
+        "join alias_row a on a.function_id = f.id ",
+        "cross join chosen r limit 1"
+    ]).
+
+run_definition_query(Psql, DatabaseUrl, Sql, Identifier) ->
+    case run_psql(Psql, DatabaseUrl, Sql) of
+        {ok, <<>>} ->
+            {error, iolist_to_binary([
+                "lambda function release not found: ",
+                Identifier
+            ])};
+        {ok, DefinitionJson} ->
+            {ok, DefinitionJson};
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+identifier_where_clause(uuid, Identifier) ->
+    ["id = '", Identifier, "'"];
+identifier_where_clause(slug, Identifier) ->
+    ["slug = '", Identifier, "'"].
+
+qualified_identifier_where_clause(uuid, Identifier, Alias) ->
+    [Alias, ".id = '", Identifier, "'"];
+qualified_identifier_where_clause(slug, Identifier, Alias) ->
+    [Alias, ".slug = '", Identifier, "'"].
+
+command_for_definition(_FallbackCommand, DefinitionJson) ->
+    Runtime = runtime_from_definition(DefinitionJson),
+    case supported_runtime(Runtime) of
+        false ->
+            {error, iolist_to_binary(["unsupported lambda runtime: ", Runtime])};
+        true ->
+            case json_bool_field(DefinitionJson, <<"containerized">>, false) of
+                true ->
+                    case lambda_execution_backend:command(
+                        Runtime,
+                        fun() -> container_command(Runtime, DefinitionJson) end,
+                        fun provider_host_command/1
+                    ) of
+                        {ok, Command} -> {ok, {shell, Command}};
+                        {error, Reason} -> {error, Reason}
+                    end;
+                false ->
+                    case host_runtime_allowed(Runtime) of
+                        true -> native_host_spawn_spec(Runtime);
+                        false ->
+                            {error, iolist_to_binary([
+                                "lambda runtime requires containerized=true for host execution: ",
+                                Runtime
+                            ])}
+                    end
+            end
+    end.
+
+supported_runtime(Runtime) ->
+    lists:member(Runtime, [
+        <<"nodejs">>, <<"python3">>, <<"ruby">>, <<"bash">>,
+        <<"golang">>, <<"dart">>, <<"erlang">>, <<"elixir">>, <<"java">>,
+        <<"gleam">>, <<"rust">>, <<"browser">>
+    ]).
+
+%% Runtimes whose child spawns a real browser (Chromium via Playwright or
+%% Puppeteer). They need a browser-shaped resource/isolation profile — more
+%% pids and memory, an executable tmpfs, and shared memory — that the
+%% general-purpose runtimes deliberately do without. See browser_run_profile/0.
+is_browser_runtime(<<"browser">>) -> true;
+is_browser_runtime(_Runtime) -> false.
+
+default_host_command(<<"nodejs">>) ->
+    {ok, <<"env -i PATH=\"$PATH\" NODE_ENV=production NODE_NO_WARNINGS=1 LAMBDA_STREAM_MAX_BYTES=\"${LAMBDA_STREAM_MAX_BYTES:-16777216}\" LAMBDA_STREAM_CHUNK_BYTES=\"${LAMBDA_STREAM_CHUNK_BYTES:-65536}\" child-runtimes/node-permission-launcher.sh --allow-fs-read=child-runtimes --allow-fs-read=../../../../libs child-runtimes/js-function-runner.mjs">>};
+default_host_command(<<"python3">>) ->
+    {ok, <<"env -i PATH=\"$PATH\" PYTHONUNBUFFERED=1 python3 child-runtimes/python-function-runner.py">>};
+default_host_command(<<"ruby">>) ->
+    {ok, <<"env -i PATH=\"$PATH\" ruby child-runtimes/ruby-function-runner.rb">>};
+default_host_command(<<"bash">>) ->
+    {ok, <<"env -i PATH=\"$PATH\" NODE_NO_WARNINGS=1 child-runtimes/node-permission-launcher.sh --allow-child-process child-runtimes/bash-function-runner.mjs">>};
+default_host_command(<<"browser">>) ->
+    {ok, <<"env -i PATH=\"$PATH\" NODE_ENV=production NODE_NO_WARNINGS=1 node child-runtimes/browser-function-runner.mjs">>};
+default_host_command(Runtime) when
+    Runtime =:= <<"golang">>;
+    Runtime =:= <<"dart">>;
+    Runtime =:= <<"erlang">>;
+    Runtime =:= <<"elixir">>;
+    Runtime =:= <<"java">>;
+    Runtime =:= <<"gleam">>;
+    Runtime =:= <<"rust">> ->
+    {ok, <<"env -i PATH=\"$PATH\" NODE_NO_WARNINGS=1 node child-runtimes/polyglot-function-runner.mjs">>};
+default_host_command(Runtime) ->
+    {error, iolist_to_binary(["unsupported lambda host runtime: ", Runtime])}.
+
+%% In provider_process mode the provider image is the reviewed outer isolation
+%% boundary. Commands are baked into the image contract and operator host-command
+%% overrides are deliberately ignored.
+provider_host_command(Runtime) ->
+    default_host_command(Runtime).
+
+%% Native hostile-process execution is an argv-only boundary.
+%%
+%% The trusted launcher is an absolute executable. It receives only the reviewed
+%% policy path and one canonical runtime identifier as argv. It owns the closed
+%% runtime -> executable/argv mapping and must invoke the pinned
+%% ORESoftware/ores-proc-isolation-cli policy without reparsing a command string.
+%% Tenant/operator definition metadata is never forwarded as startup syntax.
+native_host_spawn_spec(Runtime) ->
+    Launcher = env_binary("LAMBDA_HOST_ISOLATION_LAUNCHER", <<>>),
+    Policy = env_binary("LAMBDA_HOST_ISOLATION_POLICY", <<>>),
+    case {
+        supported_runtime(Runtime),
+        safe_host_isolation_launcher(Launcher),
+        safe_host_isolation_policy(Policy)
+    } of
+        {true, true, true} ->
+            {ok, {exec, Launcher, [Policy, Runtime], []}};
+        {false, _, _} ->
+            {error, iolist_to_binary(["unsupported lambda host runtime: ", Runtime])};
+        {_, false, _} ->
+            {error, <<
+                "non-containerized host runtime requires an absolute typed "
+                "LAMBDA_HOST_ISOLATION_LAUNCHER executable"
+            >>};
+        {_, _, false} ->
+            {error, <<
+                "non-containerized host runtime requires an absolute traversal-free "
+                "LAMBDA_HOST_ISOLATION_POLICY path"
+            >>}
+    end.
+
+native_host_spawn_spec_for_test(Runtime0) ->
+    Runtime = canonical_runtime(to_binary(Runtime0)),
+    native_host_spawn_spec(Runtime).
+
+safe_host_isolation_launcher(Launcher) ->
+    safe_absolute_host_path(Launcher, 1023).
+
+safe_host_isolation_policy(Policy) ->
+    safe_absolute_host_path(Policy, 4095).
+
+safe_absolute_host_path(<<"//", _/binary>>, _Max) ->
+    false;
+safe_absolute_host_path(<<"/", _/binary>> = Path, Max)
+        when byte_size(Path) > 1, byte_size(Path) =< Max ->
+    binary:match(Path, <<0>>) =:= nomatch andalso
+    re:run(Path, <<"^/[A-Za-z0-9._/-]+$">>, [{capture, none}]) =:= match andalso
+    safe_absolute_path_segments(Path);
+safe_absolute_host_path(_, _Max) ->
+    false.
+
+safe_absolute_path_segments(Path) ->
+    case binary:split(Path, <<"/">>, [global]) of
+        [<<>> | Segments] when Segments =/= [] ->
+            lists:all(
+                fun(Segment) ->
+                    Segment =/= <<>> andalso
+                    Segment =/= <<".">> andalso
+                    Segment =/= <<"..">>
+                end,
+                Segments
+            );
+        _ ->
+            false
+    end.
+
+%% Host execution is off by default. Allowlisting a runtime is necessary but no
+%% longer sufficient: native_host_spawn_spec/1 must resolve a typed launcher.
+host_runtime_allowed(Runtime) ->
+    lists:member(Runtime, csv_env("LAMBDA_ALLOW_HOST_RUNTIMES", <<>>)).
+
+container_command(Runtime, DefinitionJson) ->
+    case env_bool("LAMBDA_CONTAINER_EXECUTION_ENABLED", false) of
+        false ->
+            {error, <<
+                "container execution is disabled; route this function to a dedicated "
+                "isolated container executor or explicitly enable a reviewed backend"
+            >>};
+        true ->
+            container_command_enabled(Runtime, DefinitionJson)
+    end.
+
+container_command_enabled(Runtime, DefinitionJson) ->
+    BuildStatus = json_string_field(DefinitionJson, <<"containerBuildStatus">>),
+    Image0 = case BuildStatus of
+        <<"built">> -> json_string_field(DefinitionJson, <<"containerImage">>);
+        _ -> <<>>
+    end,
+    Image = case Image0 of
+        <<>> -> default_container_image(Runtime);
+        _ -> Image0
+    end,
+    EntryCommand = json_string_field(DefinitionJson, <<"entryCommand">>),
+    case {safe_container_image(Image), safe_entry_command(EntryCommand), host_network_allowed()} of
+        {_, _, false} ->
+            {error, <<
+                "LAMBDA_CONTAINER_NETWORK=host puts user code in the node's network "
+                "namespace, where it can reach the instance metadata service and "
+                "node-local ports and is not covered by this pod's NetworkPolicy; "
+                "use a CNI network or set LAMBDA_ALLOW_CONTAINER_HOST_NETWORK=true "
+                "to accept that exposure"
+            >>};
+        {true, true, true} ->
+            %% Default to a dedicated namespace so we do not collide with kubelet's
+            %% CRI plugin and so periodic reapers can target our containers safely.
+            Namespace = env_binary("LAMBDA_CONTAINER_NAMESPACE", <<"dd-lambda">>),
+            Network = env_binary("LAMBDA_CONTAINER_NETWORK", <<"bridge">>),
+            BrowserAutomation = Runtime =:= <<"nodejs">> andalso
+                json_bool_field(DefinitionJson, <<"browserAutomation">>, false),
+            RunProfile = case BrowserAutomation of
+                true -> <<"browser">>;
+                false -> Runtime
+            end,
+            BrowserProfile = is_browser_runtime(RunProfile),
+            Resources = container_resource_profile(
+                DefinitionJson,
+                BrowserProfile
+            ),
+            TimeoutSecs = env_binary("LAMBDA_CONTAINER_INVOKE_TIMEOUT_SECONDS", <<"120">>),
+            case env_binary("LAMBDA_CONTAINER_RUNNER", <<"nerdctl">>) of
+                <<"ctr">> ->
+                    Ctr = env_binary("LAMBDA_CONTAINER_CTR", <<"/usr/local/bin/ctr">>),
+                    {ok, wrap_with_timeout(TimeoutSecs, ctr_container_command(Ctr, Namespace, Network, Resources, Image, RunProfile, EntryCommand))};
+                <<"docker">> ->
+                    Docker = env_binary("LAMBDA_CONTAINER_DOCKER", <<"/usr/bin/docker">>),
+                    {ok, wrap_with_timeout(TimeoutSecs, docker_cli_container_command(Docker, Network, Resources, Image, RunProfile, EntryCommand))};
+                <<"podman">> ->
+                    Podman = env_binary("LAMBDA_CONTAINER_PODMAN", <<"/usr/bin/podman">>),
+                    {ok, wrap_with_timeout(TimeoutSecs, docker_cli_container_command(Podman, Network, Resources, Image, RunProfile, EntryCommand))};
+                <<"nerdctl">> ->
+                    Nerdctl = env_binary("LAMBDA_CONTAINER_NERDCTL", <<"/usr/local/bin/nerdctl">>),
+                    {ok, wrap_with_timeout(TimeoutSecs, nerdctl_container_command(Nerdctl, Namespace, Network, Resources, Image, RunProfile, EntryCommand))};
+                Other ->
+                    %% Fail closed: an unrecognized runner (typo, stale config) must not
+                    %% silently fall back to a different runtime than the operator set.
+                    {error, iolist_to_binary([
+                        "unsupported LAMBDA_CONTAINER_RUNNER (expected nerdctl|ctr|docker|podman): ",
+                        Other
+                    ])}
+            end;
+        {false, _, _} ->
+            {error, <<"containerImage contains unsupported characters">>};
+        {_, false, _} ->
+            {error, <<"entryCommand contains unsupported characters or exceeds 512 bytes">>}
+    end.
+
+%% Host networking is only permitted with an explicit operator acknowledgement.
+%% `--net-host` / `--network host` hands the user-code container the node's
+%% network namespace: cloud instance metadata (169.254.169.254), kubelet, and
+%% every node-local listener become reachable, and the traffic no longer
+%% originates from this pod's IP, so the pod NetworkPolicy stops constraining it.
+host_network_allowed() ->
+    case env_binary("LAMBDA_CONTAINER_NETWORK", <<"bridge">>) of
+        <<"host">> -> env_bool("LAMBDA_ALLOW_CONTAINER_HOST_NETWORK", false);
+        _Other -> true
+    end.
+
+%% Test-only inspection surface used by the Gleam contract suite. It has no
+%% side effects and deliberately returns the exact command sent to open_port.
+container_command_for_test(Runtime0, DefinitionJson0) ->
+    Runtime = canonical_runtime(to_binary(Runtime0)),
+    container_command(Runtime, to_binary(DefinitionJson0)).
+
+%% Wrap a runner shell command in `timeout` so a stuck nerdctl/ctr invocation cannot
+%% pin an Erlang port forever. `--kill-after=10` ensures SIGKILL on hung shims.
+wrap_with_timeout(SecondsBinary, Command) ->
+    case safe_timeout_value(SecondsBinary) of
+        {ok, Seconds} ->
+            iolist_to_binary([
+                "timeout --kill-after=10 ", Seconds, " ", Command
+            ]);
+        error ->
+            Command
+    end.
+
+safe_timeout_value(Value0) ->
+    Value = to_binary(Value0),
+    case re:run(Value, "^[0-9]{1,5}$", [{capture, none}]) of
+        match -> {ok, Value};
+        nomatch -> error
+    end.
+
+%% The control plane stores these values under metadata.runtimeConfig and
+%% immutable revisions retain that snapshot. Scope the lightweight JSON lookup
+%% to that flat object so arbitrary user metadata cannot shadow resource fields.
+%%
+%% Missing values preserve the operator-level defaults used before function
+%% resource configuration existed. Present values are clamped again here: the
+%% management API validates them, but the runner must remain safe when invoked
+%% directly or when reading an older/malformed database row.
+container_resource_profile(DefinitionJson, BrowserProfile) ->
+    RuntimeConfigJson = json_flat_object_field(
+        DefinitionJson,
+        <<"runtimeConfig">>
+    ),
+    MemoryMb = json_int_field(RuntimeConfigJson, <<"memoryMb">>, 0),
+    {Memory, MemoryBytes} = case MemoryMb > 0 of
+        true ->
+            SafeMemoryMb = clamp_int(MemoryMb, 128, 10240),
+            {
+                iolist_to_binary([integer_to_binary(SafeMemoryMb), "m"]),
+                integer_to_binary(SafeMemoryMb * 1048576)
+            };
+        false when BrowserProfile ->
+            {
+                env_binary("LAMBDA_BROWSER_CONTAINER_MEMORY", <<"1g">>),
+                env_binary(
+                    "LAMBDA_BROWSER_CONTAINER_MEMORY_BYTES",
+                    <<"1073741824">>
+                )
+            };
+        false ->
+            {
+                env_binary("LAMBDA_CONTAINER_MEMORY", <<"1g">>),
+                env_binary("LAMBDA_CONTAINER_MEMORY_BYTES", <<"1073741824">>)
+            }
+    end,
+    CpuMillis = json_int_field(RuntimeConfigJson, <<"cpuMillis">>, 0),
+    Cpus = case CpuMillis > 0 of
+        true -> cpu_millis_to_cli(clamp_int(CpuMillis, 100, 6000));
+        false when BrowserProfile ->
+            env_binary("LAMBDA_BROWSER_CONTAINER_CPUS", <<"1.0">>);
+        false ->
+            env_binary("LAMBDA_CONTAINER_CPUS", <<"1.0">>)
+    end,
+    EphemeralStorageMb = json_int_field(
+        RuntimeConfigJson,
+        <<"ephemeralStorageMb">>,
+        0
+    ),
+    WorkTmpfsSize = case EphemeralStorageMb > 0 of
+        true ->
+            SafeStorageMb = clamp_int(EphemeralStorageMb, 512, 10240),
+            iolist_to_binary([integer_to_binary(SafeStorageMb), "m"]);
+        false ->
+            env_binary("LAMBDA_CONTAINER_WORK_TMPFS_SIZE", <<"1g">>)
+    end,
+    Platform = case json_string_field(RuntimeConfigJson, <<"architecture">>) of
+        <<"x86_64">> -> <<"linux/amd64">>;
+        <<"arm64">> -> <<"linux/arm64">>;
+        _ -> env_binary("LAMBDA_CONTAINER_PLATFORM", <<>>)
+    end,
+    #{
+        memory => Memory,
+        memory_bytes => MemoryBytes,
+        cpus => Cpus,
+        work_tmpfs_size => WorkTmpfsSize,
+        platform => Platform
+    }.
+
+cpu_millis_to_cli(CpuMillis) ->
+    iolist_to_binary(io_lib:format("~.3f", [CpuMillis / 1000])).
+
+docker_platform_args(<<>>) -> "";
+docker_platform_args(Platform) -> [" --platform ", shell_word(Platform)].
+
+ctr_platform_args(<<>>) -> "";
+ctr_platform_args(Platform) -> [" --platform ", shell_word(Platform)].
+
+nerdctl_container_command(Nerdctl, Namespace, Network, Resources, Image, Runtime, EntryCommand) ->
+    %% nerdctl is Docker-CLI compatible but scopes everything to a containerd
+    %% namespace via `-n`, which docker/podman do not have.
+    iolist_to_binary([
+        shell_word(Nerdctl),
+        " -n ", shell_word(Namespace),
+        docker_compatible_run_args(Runtime, Network, Resources, Image, EntryCommand)
+    ]).
+
+%% Shared by the Docker-CLI compatible runners (docker, podman). Same flag
+%% surface as nerdctl, minus the containerd `-n <namespace>` selector.
+docker_cli_container_command(Binary, Network, Resources, Image, Runtime, EntryCommand) ->
+    iolist_to_binary([
+        shell_word(Binary),
+        docker_compatible_run_args(Runtime, Network, Resources, Image, EntryCommand)
+    ]).
+
+docker_compatible_run_args(Runtime, Network, Resources, Image, EntryCommand) ->
+    case is_browser_runtime(Runtime) of
+        true -> browser_run_args(Network, Resources, Image, EntryCommand);
+        false -> standard_run_args(Network, Resources, Image, EntryCommand)
+    end.
+
+%% Locked-down default for the code-only runtimes: read-only rootfs, a small
+%% non-executable tmpfs, all capabilities dropped, tight pid/file/memory limits.
+standard_run_args(Network, Resources, Image, EntryCommand) ->
+    Memory = maps:get(memory, Resources),
+    Cpus = maps:get(cpus, Resources),
+    WorkTmpfsSize = maps:get(work_tmpfs_size, Resources),
+    Platform = maps:get(platform, Resources),
+    [
+        " run --rm -i --pull=never --read-only",
+        docker_platform_args(Platform),
+        " --tmpfs /tmp:rw,noexec,nosuid,size=16m,mode=1777",
+        " --tmpfs ",
+        shell_word(iolist_to_binary([
+            "/work:rw,exec,nosuid,nodev,size=", WorkTmpfsSize, ",mode=1777"
+        ])),
+        " --network ", shell_word(Network),
+        " --user 10001:10001",
+        " --cap-drop ALL",
+        " --security-opt no-new-privileges",
+        " --pids-limit 64",
+        " --ulimit nofile=64:64",
+        " --memory ", shell_word(Memory),
+        " --cpus ", shell_word(Cpus),
+        runtime_container_env_args(EntryCommand),
+        " ", shell_word(Image)
+    ].
+
+browser_container_env_args() ->
+    container_env_args([
+        {"NATS_URL", <<>>},
+        {"CONTAINER_POOL_NATS_URL", <<>>},
+        {"CONTAINER_POOL_NATS_SUBJECT_PREFIX", <<"dd.remote.container_pool">>},
+        {"CONTAINER_POOL_NATS_TIMEOUT_MS", <<"30000">>},
+        {"LAMBDA_BROWSER_ENGINE", <<"playwright">>},
+        {"LAMBDA_BROWSER_ALLOWED_HOSTS", <<>>},
+        {"LAMBDA_BROWSER_ALLOW_PRIVATE_NETWORKS", <<"false">>},
+        {"LAMBDA_SCRAPING_USER_AGENT", <<>>},
+        {"LAMBDA_SCRAPING_MIN_DELAY_MS", <<"1000">>},
+        {"LAMBDA_SCRAPING_ROBOTS_TTL_MS", <<"3600000">>},
+        {"LAMBDA_SCRAPING_NAV_TIMEOUT_MS", <<"30000">>},
+        {"LAMBDA_SCRAPING_ALLOW_ROBOTS_OVERRIDE", <<"false">>}
+    ]).
+
+container_env_args(Pairs) ->
+    lists:map(
+        fun({Name, Default}) ->
+            Value = env_binary(Name, Default),
+            container_env_arg(Name, Value)
+        end,
+        Pairs
+    ).
+
+runtime_container_env_args(EntryCommand) ->
+    [
+        container_env_arg("SCINTILLA_RUNTIME_CONTRACT", <<"scintilla.run/runtime.v1">>),
+        container_env_arg("SCINTILLA_RUNTIME_COMMAND", EntryCommand),
+        container_env_arg("HOME", <<"/work">>),
+        container_env_arg("TMPDIR", <<"/work">>),
+        container_env_args([
+        {"OTEL_EXPORTER_OTLP_ENDPOINT", <<>>},
+        {"OTEL_EXPORTER_OTLP_PROTOCOL", <<"grpc">>},
+        {"OTEL_PROPAGATORS", <<"tracecontext,baggage">>},
+        {"OTEL_RESOURCE_ATTRIBUTES", <<>>},
+        {"LAMBDA_STREAM_MAX_BYTES", <<"16777216">>},
+        {"LAMBDA_STREAM_CHUNK_BYTES", <<"65536">>},
+        {"LAMBDA_ACTOR_STATE_MAX_BYTES", <<"524288">>}
+        ])
+    ].
+
+container_env_arg(Name, Value) ->
+    [" --env ", shell_word(iolist_to_binary([Name, "=", Value]))].
+
+%% Browser-shaped profile for Playwright/Puppeteer. Still non-root, read-only
+%% root, all caps dropped, and no-new-privileges — but Chromium forces a few
+%% relaxations the code runtimes avoid: it execs helper binaries from its temp
+%% dir (so the tmpfs keeps `exec`), uses real shared memory (`--shm-size`, else
+%% renderers crash), forks many short-lived processes (higher `--pids-limit`),
+%% and needs more RAM and file descriptors. Each limit is an env knob so an
+%% operator can tighten or loosen it per cluster.
+browser_run_args(Network, Resources, Image, EntryCommand) ->
+    Memory = maps:get(memory, Resources),
+    Cpus = maps:get(cpus, Resources),
+    WorkTmpfsSize = maps:get(work_tmpfs_size, Resources),
+    Platform = maps:get(platform, Resources),
+    Pids = env_binary("LAMBDA_BROWSER_CONTAINER_PIDS", <<"512">>),
+    ShmSize = env_binary("LAMBDA_BROWSER_CONTAINER_SHM_SIZE", <<"256m">>),
+    TmpfsSize = env_binary("LAMBDA_BROWSER_CONTAINER_TMPFS_SIZE", <<"256m">>),
+    NoFile = env_binary("LAMBDA_BROWSER_CONTAINER_NOFILE", <<"1024">>),
+    [
+        " run --rm -i --pull=never --read-only",
+        docker_platform_args(Platform),
+        " --tmpfs ",
+        shell_word(iolist_to_binary(["/tmp:rw,nosuid,size=", TmpfsSize, ",mode=1777"])),
+        " --tmpfs ",
+        shell_word(iolist_to_binary([
+            "/work:rw,exec,nosuid,nodev,size=", WorkTmpfsSize, ",mode=1777"
+        ])),
+        " --shm-size ", shell_word(ShmSize),
+        " --network ", shell_word(Network),
+        " --user 10001:10001",
+        " --cap-drop ALL",
+        " --security-opt no-new-privileges",
+        " --pids-limit ", shell_word(Pids),
+        " --ulimit ", shell_word(iolist_to_binary(["nofile=", NoFile, ":", NoFile])),
+        " --memory ", shell_word(Memory),
+        " --cpus ", shell_word(Cpus),
+        runtime_container_env_args(EntryCommand),
+        browser_container_env_args(),
+        " ", shell_word(Image)
+    ].
+
+ctr_container_command(Ctr, Namespace, Network, Resources, Image, Runtime, EntryCommand) ->
+    ContainerId = iolist_to_binary(["dd-lambda-", Runtime, "-$(date +%s%N)-$$"]),
+    MemoryBytes = maps:get(memory_bytes, Resources),
+    Cpus = maps:get(cpus, Resources),
+    Platform = maps:get(platform, Resources),
+    iolist_to_binary([
+        shell_word(Ctr),
+        " -n ", shell_word(Namespace),
+        " run --rm",
+        ctr_platform_args(Platform),
+        ctr_network_args(Network),
+        " --read-only",
+        ctr_tmpfs_mounts(Runtime, maps:get(work_tmpfs_size, Resources)),
+        " --user 10001:10001",
+        ctr_cap_drop_args(),
+        " --seccomp",
+        " --memory-limit ", shell_word(MemoryBytes),
+        " --cpus ", shell_word(Cpus),
+        runtime_container_env_args(EntryCommand),
+        case is_browser_runtime(Runtime) of
+            true -> browser_container_env_args();
+            false -> ""
+        end,
+        " ", shell_word(Image),
+        " ", ContainerId
+    ]).
+
+%% Code runtimes get one small non-executable /tmp. Browsers keep /tmp
+%% executable (Chromium execs helpers from it) and add a real /dev/shm so
+%% renderer processes do not crash on the container's tiny default shm.
+ctr_tmpfs_mounts(Runtime, WorkTmpfsSize) ->
+    case is_browser_runtime(Runtime) of
+        true ->
+            TmpfsSize = env_binary("LAMBDA_BROWSER_CONTAINER_TMPFS_SIZE", <<"256m">>),
+            ShmSize = env_binary("LAMBDA_BROWSER_CONTAINER_SHM_SIZE", <<"256m">>),
+            [
+                " --mount ",
+                shell_word(iolist_to_binary([
+                    "type=tmpfs,dst=/tmp,options=rw:nosuid:size=", TmpfsSize, ":mode=1777"
+                ])),
+                " --mount ",
+                shell_word(iolist_to_binary([
+                    "type=tmpfs,dst=/dev/shm,options=rw:nosuid:size=", ShmSize, ":mode=1777"
+                ])),
+                " --mount ",
+                shell_word(iolist_to_binary([
+                    "type=tmpfs,dst=/work,options=rw:exec:nosuid:nodev:size=",
+                    WorkTmpfsSize,
+                    ":mode=1777"
+                ]))
+            ];
+        false ->
+            [
+                " --mount type=tmpfs,dst=/tmp,options=rw:noexec:nosuid:size=16m:mode=1777",
+                " --mount ",
+                shell_word(iolist_to_binary([
+                    "type=tmpfs,dst=/work,options=rw:exec:nosuid:nodev:size=",
+                    WorkTmpfsSize,
+                    ":mode=1777"
+                ]))
+            ]
+    end.
+
+ctr_network_args(<<"none">>) -> "";
+ctr_network_args(<<"host">>) -> " --net-host";
+ctr_network_args(_Network) -> " --cni".
+
+ctr_cap_drop_args() ->
+    " --cap-drop CAP_AUDIT_WRITE --cap-drop CAP_CHOWN --cap-drop CAP_DAC_OVERRIDE"
+    " --cap-drop CAP_FOWNER --cap-drop CAP_FSETID --cap-drop CAP_KILL"
+    " --cap-drop CAP_MKNOD --cap-drop CAP_NET_BIND_SERVICE --cap-drop CAP_NET_RAW"
+    " --cap-drop CAP_SETFCAP --cap-drop CAP_SETGID --cap-drop CAP_SETPCAP"
+    " --cap-drop CAP_SETUID --cap-drop CAP_SYS_CHROOT".
+
+default_container_image(<<"nodejs">>) ->
+    env_binary("LAMBDA_NODEJS_CONTAINER_IMAGE", <<"docker.io/library/dd-lambda-nodejs-runtime:dev">>);
+default_container_image(<<"python3">>) ->
+    env_binary("LAMBDA_PYTHON3_CONTAINER_IMAGE", <<"docker.io/library/dd-lambda-python3-runtime:dev">>);
+default_container_image(<<"ruby">>) ->
+    env_binary("LAMBDA_RUBY_CONTAINER_IMAGE", <<"docker.io/library/dd-lambda-ruby-runtime:dev">>);
+default_container_image(<<"bash">>) ->
+    env_binary("LAMBDA_BASH_CONTAINER_IMAGE", <<"docker.io/library/dd-lambda-bash-runtime:dev">>);
+default_container_image(<<"golang">>) ->
+    env_binary("LAMBDA_GOLANG_CONTAINER_IMAGE", <<"docker.io/library/dd-lambda-golang-runtime:dev">>);
+default_container_image(<<"dart">>) ->
+    env_binary("LAMBDA_DART_CONTAINER_IMAGE", <<"docker.io/library/dd-lambda-dart-runtime:dev">>);
+default_container_image(<<"erlang">>) ->
+    env_binary("LAMBDA_ERLANG_CONTAINER_IMAGE", <<"docker.io/library/dd-lambda-erlang-runtime:dev">>);
+default_container_image(<<"elixir">>) ->
+    env_binary("LAMBDA_ELIXIR_CONTAINER_IMAGE", <<"docker.io/library/dd-lambda-elixir-runtime:dev">>);
+default_container_image(<<"java">>) ->
+    env_binary("LAMBDA_JAVA_CONTAINER_IMAGE", <<"docker.io/library/dd-lambda-java-runtime:dev">>);
+default_container_image(<<"gleam">>) ->
+    env_binary("LAMBDA_GLEAM_CONTAINER_IMAGE", <<"docker.io/library/dd-lambda-gleam-runtime:dev">>);
+default_container_image(<<"rust">>) ->
+    env_binary("LAMBDA_RUST_CONTAINER_IMAGE", <<"docker.io/library/dd-lambda-rust-runtime:dev">>);
+default_container_image(<<"browser">>) ->
+    env_binary("LAMBDA_BROWSER_CONTAINER_IMAGE", <<"docker.io/library/dd-lambda-browser-runtime:dev">>);
+default_container_image(_Runtime) ->
+    <<>>.
+
+worker_pool(Identifier, DefinitionJson, Runtime, Containerized) ->
+    DeploymentIdentifier = definition_worker_identifier(
+        Identifier,
+        DefinitionJson
+    ),
+    case json_string_field(DefinitionJson, <<"reuseKey">>) of
+        <<>> ->
+            ConfiguredMax = json_int_field(DefinitionJson, <<"maxConcurrency">>, 0),
+            ConfiguredProvisioned = json_int_field(
+                DefinitionJson,
+                <<"provisionedConcurrency">>,
+                0
+            ),
+            case ConfiguredMax > 0 orelse ConfiguredProvisioned > 0 of
+                true ->
+                    EffectiveMax = case ConfiguredMax > 0 of
+                        true -> clamp_int(ConfiguredMax, 1, 1000);
+                        false ->
+                            clamp_int(
+                                max(default_max_concurrency(), ConfiguredProvisioned),
+                                1,
+                                1000
+                            )
+                    end,
+                    {ok,
+                        iolist_to_binary([
+                            "function:",
+                            DeploymentIdentifier,
+                            ":default"
+                        ]),
+                        EffectiveMax};
+                false ->
+                    PoolKey = case Containerized of
+                        true -> iolist_to_binary(["pool:container:", Runtime]);
+                        false -> iolist_to_binary(["pool:host:", Runtime])
+                    end,
+                    {ok, PoolKey, default_max_concurrency()}
+            end;
+        ReuseKey ->
+            case safe_reuse_key(ReuseKey) of
+                %% An affinity key represents one stateful execution context.
+                %% It therefore stays single-flight even if maxConcurrency is
+                %% also present in the definition.
+                true ->
+                    {ok,
+                        iolist_to_binary([
+                            "function:",
+                            DeploymentIdentifier,
+                            ":",
+                            ReuseKey
+                        ]),
+                        1};
+                false -> {error, <<"reuseKey contains unsupported characters">>}
+            end
+    end.
+
+worker_pool_for_test(Identifier0, DefinitionJson0, Runtime0, Containerized) ->
+    worker_pool(
+        to_binary(Identifier0),
+        normalize_json_payload(to_binary(DefinitionJson0)),
+        canonical_runtime(to_binary(Runtime0)),
+        Containerized
+    ).
+
+definition_worker_identifier(Identifier, DefinitionJson) ->
+    case json_string_field(DefinitionJson, <<"revisionId">>) of
+        <<>> -> Identifier;
+        RevisionId -> iolist_to_binary([Identifier, "@", RevisionId])
+    end.
+
+check_worker_key(Runtime, true) ->
+    iolist_to_binary(["check:container:", Runtime]);
+check_worker_key(Runtime, false) ->
+    iolist_to_binary(["check:host:", Runtime]).
+
+idle_ms_from_definition(DefinitionJson, Fallback) ->
+    Seconds = json_int_field(DefinitionJson, <<"idleTimeoutSeconds">>, 0),
+    case Seconds > 0 of
+        true -> max_int(Seconds * 1000, 1000);
+        false -> max_int(Fallback, 1000)
+    end.
+
+timeout_ms_from_definition(DefinitionJson, Fallback) ->
+    Timeout = json_int_field(DefinitionJson, <<"maxRunMs">>, 0),
+    case Timeout > 0 of
+        true -> max_int(Timeout, 1000);
+        false -> max_int(Fallback, 1000)
+    end.
+
+provisioned_concurrency_from_definition(DefinitionJson, MaxConcurrency) ->
+    clamp_int(
+        json_int_field(DefinitionJson, <<"provisionedConcurrency">>, 0),
+        0,
+        MaxConcurrency
+    ).
+
+provisioned_concurrency_for_test(DefinitionJson0, MaxConcurrency0) ->
+    provisioned_concurrency_from_definition(
+        normalize_json_payload(to_binary(DefinitionJson0)),
+        clamp_int(MaxConcurrency0, 1, 1000)
+    ).
+
+default_max_concurrency() ->
+    clamp_int(env_int("LAMBDA_DEFAULT_MAX_CONCURRENCY", 16), 1, 1000).
+
+stream_max_bytes() ->
+    clamp_int(
+        env_int("LAMBDA_STREAM_MAX_BYTES", 16777216),
+        1024,
+        1073741824
+    ).
+
+runtime_from_definition(DefinitionJson) ->
+    canonical_runtime(json_string_field(DefinitionJson, <<"runtime">>)).
+
+canonical_runtime(<<"javascript">>) -> <<"nodejs">>;
+canonical_runtime(<<"typescript">>) -> <<"nodejs">>;
+canonical_runtime(<<"node">>) -> <<"nodejs">>;
+canonical_runtime(<<"nodejs">>) -> <<"nodejs">>;
+canonical_runtime(<<"python">>) -> <<"python3">>;
+canonical_runtime(<<"python3">>) -> <<"python3">>;
+canonical_runtime(<<"shell">>) -> <<"bash">>;
+canonical_runtime(<<"bash">>) -> <<"bash">>;
+canonical_runtime(<<"ruby">>) -> <<"ruby">>;
+canonical_runtime(<<"go">>) -> <<"golang">>;
+canonical_runtime(<<"golang">>) -> <<"golang">>;
+canonical_runtime(<<"dart">>) -> <<"dart">>;
+canonical_runtime(<<"erl">>) -> <<"erlang">>;
+canonical_runtime(<<"erlang">>) -> <<"erlang">>;
+canonical_runtime(<<"ex">>) -> <<"elixir">>;
+canonical_runtime(<<"elixir">>) -> <<"elixir">>;
+canonical_runtime(<<"jvm">>) -> <<"java">>;
+canonical_runtime(<<"java">>) -> <<"java">>;
+canonical_runtime(<<"gleamlang">>) -> <<"gleam">>;
+canonical_runtime(<<"gleam">>) -> <<"gleam">>;
+canonical_runtime(<<"rs">>) -> <<"rust">>;
+canonical_runtime(<<"rust">>) -> <<"rust">>;
+%% Browser-automation runtime. Playwright and Puppeteer are both first-class:
+%% the child runner exposes both libraries, so any of these aliases resolves to
+%% the same hardened Chromium-capable image.
+canonical_runtime(<<"browser">>) -> <<"browser">>;
+canonical_runtime(<<"playwright">>) -> <<"browser">>;
+canonical_runtime(<<"puppeteer">>) -> <<"browser">>;
+canonical_runtime(<<"chromium">>) -> <<"browser">>;
+canonical_runtime(<<"headless">>) -> <<"browser">>;
+canonical_runtime(<<"scraper">>) -> <<"browser">>;
+canonical_runtime(<<"scraping">>) -> <<"browser">>;
+canonical_runtime(<<>>) -> <<"nodejs">>;
+canonical_runtime(Runtime) -> Runtime.
+
+run_psql(Psql, DatabaseUrl, Sql) ->
+    Port = open_port({spawn_executable, Psql}, [
+        binary,
+        exit_status,
+        stderr_to_stdout,
+        use_stdio,
+        {args, [
+            DatabaseUrl,
+            "-X",
+            "-q",
+            "-At",
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-c",
+            binary_to_list(Sql)
+        ]}
+    ]),
+    collect_port(Port, [], 0, 5000).
+
+collect_port(Port, Chunks, Size, TimeoutMs) ->
+    receive
+        {Port, {data, Data}} ->
+            NewSize = Size + byte_size(Data),
+            case NewSize > 1048576 of
+                true ->
+                    close_port(Port),
+                    {error, <<"lambda definition query exceeded byte limit">>};
+                false ->
+                    collect_port(Port, [Data | Chunks], NewSize, TimeoutMs)
+            end;
+        {Port, {exit_status, 0}} ->
+            {ok, normalize_json_payload(iolist_to_binary(lists:reverse(Chunks)))};
+        {Port, {exit_status, Status}} ->
+            Output = normalize_json_payload(iolist_to_binary(lists:reverse(Chunks))),
+            {error, iolist_to_binary(io_lib:format("psql exited with status ~p: ~s", [Status, Output]))}
+    after TimeoutMs ->
+        close_port(Port),
+        {error, <<"lambda definition query timed out">>}
+    end.
+
+database_url() ->
+    case dd_cli_config_client_ffi:getenv(<<"LAMBDA_DATABASE_URL">>, <<>>) of
+        <<>> -> {error, <<"LAMBDA_DATABASE_URL is required">>};
+        Value -> {ok, binary_to_list(Value)}
+    end.
+
+split_function_reference(Reference0) ->
+    Reference = to_binary(Reference0),
+    case binary:split(Reference, <<"@">>, [global]) of
+        [Identifier] when Identifier =/= <<>> ->
+            {ok, Identifier, <<>>};
+        [Identifier, Qualifier]
+            when Identifier =/= <<>>, Qualifier =/= <<>> ->
+            {ok, Identifier, Qualifier};
+        _ ->
+            {error, <<"valid lambda function reference is required">>}
+    end.
+
+identifier_kind(Identifier) ->
+    case re:run(Identifier, "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", [{capture, none}]) of
+        match ->
+            uuid;
+        nomatch ->
+            case re:run(Identifier, "^[a-z0-9][a-z0-9-]{1,118}[a-z0-9]$", [{capture, none}]) of
+                match -> slug;
+                nomatch -> invalid
+            end
+    end.
+
+qualifier_kind(<<"latest">>) ->
+    latest;
+qualifier_kind(Qualifier) ->
+    case re:run(Qualifier, "^[1-9][0-9]{0,17}$", [{capture, none}]) of
+        match ->
+            {RevisionNumber, []} = string:to_integer(
+                binary_to_list(Qualifier)
+            ),
+            {revision, RevisionNumber};
+        nomatch ->
+            case re:run(
+                Qualifier,
+                "^[a-z][a-z0-9._-]{0,63}$",
+                [{capture, none}]
+            ) of
+                match -> alias;
+                nomatch -> invalid
+            end
+    end.
+
+safe_affinity(Affinity) ->
+    byte_size(Affinity) =< 512 andalso binary:match(Affinity, <<0>>) =:= nomatch.
+
+affinity_bucket(Identifier, Qualifier, <<>>) ->
+    Random = crypto:strong_rand_bytes(16),
+    hash_bucket(<<Identifier/binary, 0, Qualifier/binary, 0, Random/binary>>);
+affinity_bucket(Identifier, Qualifier, Affinity) ->
+    hash_bucket(<<Identifier/binary, 0, Qualifier/binary, 0, Affinity/binary>>).
+
+hash_bucket(Value) ->
+    Digest = crypto:hash(sha256, Value),
+    binary:decode_unsigned(binary:part(Digest, 0, 4)) rem 10000.
+
+revision_routing_enabled() ->
+    env_bool("LAMBDA_REVISION_ROUTING_ENABLED", false).
+
+bump_release_routing(DefinitionJson) ->
+    case json_string_field(DefinitionJson, <<"releaseMode">>) of
+        <<"alias">> ->
+            bump(release_routed_invocations_total, 1),
+            bump(alias_routed_invocations_total, 1);
+        <<"revision">> ->
+            bump(release_routed_invocations_total, 1),
+            bump(revision_routed_invocations_total, 1);
+        _ ->
+            ok
+    end.
+
+invocation_payload(Slug, DefinitionJson, RequestJson) ->
+    iolist_to_binary([
+        "{\"slug\":\"",
+        json_escape(Slug),
+        "\",\"definition\":",
+        DefinitionJson,
+        ",\"request\":",
+        RequestJson,
+        "}"
+    ]).
+
+stream_invocation_payload(Slug, DefinitionJson, RequestJson) ->
+    iolist_to_binary([
+        "{\"mode\":\"stream\",\"slug\":\"",
+        json_escape(Slug),
+        "\",\"definition\":",
+        DefinitionJson,
+        ",\"request\":",
+        RequestJson,
+        "}"
+    ]).
+
+actor_invocation_payload(Slug, DefinitionJson, ActorJson, RequestJson) ->
+    iolist_to_binary([
+        "{\"mode\":\"actor\",\"slug\":\"",
+        json_escape(Slug),
+        "\",\"definition\":",
+        DefinitionJson,
+        ",\"actor\":",
+        ActorJson,
+        ",\"request\":",
+        RequestJson,
+        "}"
+    ]).
+
+actor_worker_key(Identifier, ActorKey) ->
+    Digest = binary:encode_hex(
+        crypto:hash(sha256, <<Identifier/binary, 0, ActorKey/binary>>),
+        lowercase
+    ),
+    iolist_to_binary(["actor:", Identifier, ":", Digest]).
+
+default_request_payload(Payload0) ->
+    case normalize_json_payload(to_binary(Payload0)) of
+        <<>> -> <<"null">>;
+        Payload -> Payload
+    end.
+
+check_payload(DefinitionJson) ->
+    Slug = case json_string_field(DefinitionJson, <<"slug">>) of
+        <<>> -> <<"lambda-check">>;
+        Value -> Value
+    end,
+    iolist_to_binary([
+        "{\"slug\":\"",
+        json_escape(Slug),
+        "\",\"definition\":",
+        DefinitionJson,
+        ",\"request\":{},\"checkOnly\":true}"
+    ]).
+
+ensure_tables() ->
+    ensure_manager(),
+    wait_for_tables(500).
+
+ensure_manager() ->
+    case lambda_runtime_supervisor:ensure_started() of
+        ok -> ok;
+        {error, Reason} ->
+            erlang:error({lambda_runtime_supervisor_unavailable, Reason})
+    end.
+
+start_manager_link() ->
+    proc_lib:start_link(?MODULE, manager_init, []).
+
+manager_init() ->
+    true = register(?SERVER, self()),
+    ensure_table(?WORKERS),
+    ensure_table(?METRICS),
+    ensure_table(?PROVISIONED),
+    proc_lib:init_ack({ok, self()}),
+    prewarm_workers(),
+    schedule_provisioned_reconcile(),
+    manager_loop().
+
+manager_loop() ->
+    receive
+        {call, From, Ref, {acquire_worker, Command, PoolKey, IdleMs, MaxConcurrency}} ->
+            From ! {
+                Ref,
+                acquire_worker_in_manager(
+                    Command,
+                    PoolKey,
+                    IdleMs,
+                    MaxConcurrency,
+                    From
+                )
+            },
+            manager_loop();
+        {call, From, Ref, {ensure_provisioned_workers, Command, PoolKey, IdleMs, Desired}} ->
+            From ! {
+                Ref,
+                ensure_provisioned_workers_in_manager(
+                    Command,
+                    PoolKey,
+                    IdleMs,
+                    Desired
+                )
+            },
+            manager_loop();
+        {call, From, Ref, {release_worker, WorkerKey, LeaseRef}} ->
+            From ! {Ref, release_worker_in_manager(WorkerKey, LeaseRef)},
+            manager_loop();
+        {call, From, Ref, {remove_worker, WorkerKey, LeaseRef}} ->
+            From ! {Ref, remove_worker_in_manager(WorkerKey, LeaseRef)},
+            manager_loop();
+        {call, From, Ref, {destroy_pool, PoolKey}} ->
+            From ! {Ref, destroy_pool_in_manager(PoolKey)},
+            manager_loop();
+        {call, From, Ref, {reap_idle, NowMs}} ->
+            From ! {Ref, reap_idle_in_manager(NowMs)},
+            manager_loop();
+        {'DOWN', Monitor, process, _Pid, _Reason} ->
+            delete_worker_by_monitor(Monitor),
+            manager_loop();
+        reconcile_provisioned ->
+            _ = reconcile_all_provisioned(),
+            schedule_provisioned_reconcile(),
+            manager_loop();
+        stop -> ok;
+        _Other -> manager_loop()
+    end.
+
+manager_call(Message) ->
+    case whereis(?SERVER) of
+        undefined ->
+            {error, <<"lambda runner manager unavailable">>};
+        Pid ->
+            Ref = make_ref(),
+            Pid ! {call, self(), Ref, Message},
+            receive
+                {Ref, Result} -> Result
+            after 5000 ->
+                {error, <<"lambda runner manager timed out">>}
+            end
+    end.
+
+wait_for_tables(Attempts) when Attempts > 0 ->
+    case {ets:info(?WORKERS), ets:info(?METRICS)} of
+        {undefined, _} ->
+            timer:sleep(10),
+            wait_for_tables(Attempts - 1);
+        {_, undefined} ->
+            timer:sleep(10),
+            wait_for_tables(Attempts - 1);
+        _ ->
+            ok
+    end;
+wait_for_tables(_Attempts) ->
+    erlang:error(lambda_child_runner_manager_unavailable).
+
+ensure_table(Name) ->
+    case ets:info(Name) of
+        undefined ->
+            ets:new(Name, [named_table, public, set]),
+            ok;
+        _ ->
+            ok
+    end.
+
+prewarm_workers() ->
+    HostRuntimes = lists:filter(
+        fun host_runtime_allowed/1,
+        csv_env("LAMBDA_PREWARM_RUNTIMES", <<"nodejs">>)
+    ),
+    lists:foreach(
+        fun(Runtime) ->
+            case native_host_spawn_spec(Runtime) of
+                {ok, SpawnSpec} ->
+                    case ensure_idle_worker_in_manager(
+                        SpawnSpec,
+                        iolist_to_binary(["pool:host:", Runtime]),
+                        300000
+                    ) of
+                        {ok, _Pid} -> ok;
+                        {error, Reason} ->
+                            io:format(
+                                "lambda prewarm host runtime=~s failed: ~s~n",
+                                [safe_label(Runtime), safe_label(Reason)]
+                            )
+                    end;
+                {error, Reason} ->
+                    io:format(
+                        "lambda prewarm host runtime=~s unsupported: ~s~n",
+                        [safe_label(Runtime), safe_label(Reason)]
+                    )
+            end
+        end,
+        HostRuntimes
+    ),
+    ContainerRuntimes = csv_env("LAMBDA_PREWARM_CONTAINER_RUNTIMES", <<>>),
+    lists:foreach(
+        fun(Runtime) ->
+            DefinitionJson = iolist_to_binary([
+                "{\"runtime\":\"", Runtime, "\",\"containerized\":true,\"containerImage\":\"",
+                default_container_image(Runtime),
+                "\"}"
+            ]),
+            case container_command(Runtime, DefinitionJson) of
+                {ok, Command} ->
+                    case ensure_idle_worker_in_manager(
+                        {shell, Command},
+                        iolist_to_binary(["pool:container:", Runtime]),
+                        300000
+                    ) of
+                        {ok, _Pid} -> ok;
+                        {error, Reason} ->
+                            io:format(
+                                "lambda prewarm container runtime=~s failed: ~s~n",
+                                [safe_label(Runtime), safe_label(Reason)]
+                            )
+                    end;
+                {error, Reason} ->
+                    io:format(
+                        "lambda prewarm container runtime=~s unsupported: ~s~n",
+                        [safe_label(Runtime), safe_label(Reason)]
+                    )
+            end
+        end,
+        ContainerRuntimes
+    ).
+
+ensure_provisioned_workers(Command, PoolKey, IdleMs, Desired) ->
+    manager_call({
+        ensure_provisioned_workers,
+        Command,
+        PoolKey,
+        IdleMs,
+        Desired
+    }).
+
+ensure_provisioned_workers_in_manager(Command, PoolKey, IdleMs, Desired0) ->
+    Desired = clamp_int(Desired0, 0, 1000),
+    case Desired of
+        0 -> ets:delete(?PROVISIONED, PoolKey);
+        _ ->
+            ets:insert(?PROVISIONED, {
+                PoolKey,
+                #{command => Command, idle_ms => IdleMs, desired => Desired}
+            })
+    end,
+    reconcile_provisioned_pool(Command, PoolKey, IdleMs, Desired).
+
+reconcile_all_provisioned() ->
+    lists:foreach(
+        fun({PoolKey, Config}) ->
+            _ = reconcile_provisioned_pool(
+                maps:get(command, Config),
+                PoolKey,
+                maps:get(idle_ms, Config),
+                maps:get(desired, Config)
+            )
+        end,
+        ets:tab2list(?PROVISIONED)
+    ),
+    ok.
+
+reconcile_provisioned_pool(Command, PoolKey, IdleMs, Desired) ->
+    remove_dead_and_stale_idle_workers(Command, PoolKey),
+    Matching = lists:sort(matching_workers(Command, PoolKey)),
+    mark_provisioned_workers(Matching, Desired),
+    Missing = max(Desired - length(Matching), 0),
+    spawn_provisioned_workers(
+        Command,
+        PoolKey,
+        IdleMs,
+        min(Missing, provisioned_spawn_batch())
+    ).
+
+mark_provisioned_workers(Workers, Desired) ->
+    {Keep, Drop} = lists:split(min(Desired, length(Workers)), Workers),
+    lists:foreach(
+        fun({WorkerKey, Worker}) ->
+            ets:insert(?WORKERS, {WorkerKey, Worker#{provisioned => true}})
+        end,
+        Keep
+    ),
+    lists:foreach(
+        fun({WorkerKey, Worker}) ->
+            ets:insert(?WORKERS, {WorkerKey, Worker#{provisioned => false}})
+        end,
+        Drop
+    ).
+
+spawn_provisioned_workers(_Command, _PoolKey, _IdleMs, 0) ->
+    ok;
+spawn_provisioned_workers(Command, PoolKey, IdleMs, Remaining) ->
+    case spawn_worker(Command, PoolKey, IdleMs, false, undefined) of
+        {ok, Pid} ->
+            mark_worker_provisioned_by_pid(Pid),
+            spawn_provisioned_workers(Command, PoolKey, IdleMs, Remaining - 1);
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+mark_worker_provisioned_by_pid(Pid) ->
+    lists:foreach(
+        fun({WorkerKey, Worker}) ->
+            case maps:get(pid, Worker) =:= Pid of
+                true ->
+                    ets:insert(?WORKERS, {
+                        WorkerKey,
+                        Worker#{provisioned => true}
+                    });
+                false -> ok
+            end
+        end,
+        ets:tab2list(?WORKERS)
+    ).
+
+schedule_provisioned_reconcile() ->
+    erlang:send_after(
+        provisioned_reconcile_ms(),
+        self(),
+        reconcile_provisioned
+    ).
+
+provisioned_reconcile_ms() ->
+    clamp_int(env_int("LAMBDA_PROVISIONED_RECONCILE_MS", 5000), 1000, 60000).
+
+provisioned_spawn_batch() ->
+    clamp_int(env_int("LAMBDA_PROVISIONED_SPAWN_BATCH", 32), 1, 128).
+
+acquire_worker(Command, PoolKey, IdleMs, MaxConcurrency) ->
+    manager_call({
+        acquire_worker,
+        Command,
+        PoolKey,
+        IdleMs,
+        MaxConcurrency
+    }).
+
+release_worker(WorkerKey, LeaseRef) ->
+    manager_call({release_worker, WorkerKey, LeaseRef}).
+
+remove_worker(WorkerKey, LeaseRef) ->
+    manager_call({remove_worker, WorkerKey, LeaseRef}).
+
+acquire_worker_in_manager(Command, PoolKey, IdleMs, MaxConcurrency, Owner) ->
+    remove_dead_and_stale_idle_workers(Command, PoolKey),
+    MatchingWorkers = matching_workers(Command, PoolKey),
+    case first_idle_worker(MatchingWorkers) of
+        {ok, WorkerKey, Worker} ->
+            bump(child_reuses_total, 1),
+            lease_worker(WorkerKey, Worker, Owner);
+        none when length(MatchingWorkers) < MaxConcurrency ->
+            spawn_worker(Command, PoolKey, IdleMs, true, Owner);
+        none ->
+            bump(concurrency_rejections_total, 1),
+            {error, iolist_to_binary([
+                "lambda concurrency limit reached for pool ",
+                PoolKey,
+                " (max ",
+                integer_to_binary(MaxConcurrency),
+                ")"
+            ])}
+    end.
+
+ensure_idle_worker_in_manager(Command, PoolKey, IdleMs) ->
+    remove_dead_and_stale_idle_workers(Command, PoolKey),
+    case first_idle_worker(matching_workers(Command, PoolKey)) of
+        {ok, _WorkerKey, Worker} ->
+            {ok, maps:get(pid, Worker)};
+        none ->
+            spawn_worker(Command, PoolKey, IdleMs, false, undefined)
+    end.
+
+matching_workers(Command, PoolKey) ->
+    lists:filter(
+        fun({_WorkerKey, Worker}) ->
+            maps:get(pool_key, Worker) =:= PoolKey andalso
+            maps:get(command, Worker) =:= Command andalso
+            worker_alive(maps:get(pid, Worker))
+        end,
+        ets:tab2list(?WORKERS)
+    ).
+
+first_idle_worker(Workers) ->
+    case lists:dropwhile(
+        fun({_WorkerKey, Worker}) -> maps:get(busy, Worker, false) end,
+        Workers
+    ) of
+        [{WorkerKey, Worker} | _] -> {ok, WorkerKey, Worker};
+        [] -> none
+    end.
+
+remove_dead_and_stale_idle_workers(Command, PoolKey) ->
+    lists:foreach(
+        fun({WorkerKey, Worker}) ->
+            SamePool = maps:get(pool_key, Worker) =:= PoolKey,
+            Alive = worker_alive(maps:get(pid, Worker)),
+            StaleIdle = SamePool andalso
+                maps:get(command, Worker) =/= Command andalso
+                not maps:get(busy, Worker, false),
+            case not Alive orelse StaleIdle of
+                true ->
+                    close_worker(maps:get(pid, Worker)),
+                    delete_worker(WorkerKey),
+                    bump(child_destroys_total, 1);
+                false ->
+                    ok
+            end
+        end,
+        ets:tab2list(?WORKERS)
+    ).
+
+spawn_worker(Command, PoolKey, IdleMs, Busy, Owner) ->
+    case lambda_runtime_supervisor:start_worker(Command) of
+        {ok, Pid} ->
+            register_worker(Pid, Command, PoolKey, IdleMs, Busy, Owner);
+        {ok, Pid, _Info} ->
+            register_worker(Pid, Command, PoolKey, IdleMs, Busy, Owner);
+        {error, Reason} ->
+            {error, iolist_to_binary(io_lib:format(
+                "failed to start supervised lambda worker: ~p",
+                [Reason]
+            ))}
+    end.
+
+register_worker(Pid, Command, PoolKey, IdleMs, Busy, Owner) ->
+    WorkerKey = iolist_to_binary([
+        PoolKey,
+        ":worker:",
+        integer_to_binary(erlang:unique_integer([positive, monotonic]))
+    ]),
+    Monitor = erlang:monitor(process, Pid),
+    Worker = #{
+        command => Command,
+        pool_key => PoolKey,
+        pid => Pid,
+        monitor => Monitor,
+        idle_ms => IdleMs,
+        last_used_ms => now_ms(),
+        busy => false,
+        lease_ref => undefined,
+        lease_monitor => undefined,
+        provisioned => false
+    },
+    ets:insert(?WORKERS, {WorkerKey, Worker}),
+    bump(child_spawns_total, 1),
+    case Busy of
+        true ->
+            lease_worker(WorkerKey, Worker, Owner);
+        false ->
+            {ok, Pid}
+    end.
+
+lease_worker(WorkerKey, Worker, Owner) ->
+    LeaseRef = make_ref(),
+    LeaseMonitor = erlang:monitor(process, Owner),
+    Leased = Worker#{
+        busy => true,
+        lease_ref => LeaseRef,
+        lease_monitor => LeaseMonitor,
+        last_used_ms => now_ms()
+    },
+    ets:insert(?WORKERS, {WorkerKey, Leased}),
+    {ok, maps:get(pid, Worker), WorkerKey, LeaseRef}.
+
+start_worker_link(SpawnSpec) ->
+    proc_lib:start_link(?MODULE, worker_init, [SpawnSpec]).
+
+worker_init({exec, Executable, Args, Env})
+        when is_binary(Executable), is_list(Args), is_list(Env) ->
+    try open_port({spawn_executable, binary_to_list(Executable)}, [
+        binary,
+        exit_status,
+        use_stdio,
+        {args, [binary_to_list(Arg) || Arg <- Args]},
+        {env, clean_port_environment(Env)}
+    ]) of
+        Port ->
+            proc_lib:init_ack({ok, self()}),
+            worker_loop(Port)
+    catch
+        Class:Reason ->
+            worker_spawn_failed(Class, Reason)
+    end;
+worker_init({shell, Command}) when is_binary(Command) ->
+    %% Legacy carrier path for OCI/provider commands only. Native hostile
+    %% process admission never constructs this variant.
+    ShellCommand = "exec " ++ binary_to_list(Command),
+    try open_port({spawn_executable, "/bin/sh"}, [
+        binary,
+        exit_status,
+        use_stdio,
+        {args, ["-c", ShellCommand]}
+    ]) of
+        Port ->
+            proc_lib:init_ack({ok, self()}),
+            worker_loop(Port)
+    catch
+        Class:Reason ->
+            worker_spawn_failed(Class, Reason)
+    end;
+worker_init(_InvalidSpawnSpec) ->
+    worker_spawn_failed(error, invalid_spawn_spec).
+
+worker_spawn_failed(Class, Reason) ->
+    Failure = iolist_to_binary(io_lib:format(
+        "failed to spawn child process: ~p:~p",
+        [Class, Reason]
+    )),
+    proc_lib:init_ack({error, Failure}),
+    exit({Class, Reason}).
+
+clean_port_environment(Allowed) ->
+    UnsetParent = lists:filtermap(
+        fun(Entry) ->
+            case string:split(Entry, "=", leading) of
+                [Name, _Value] when Name =/= [] -> {true, {Name, false}};
+                _ -> false
+            end
+        end,
+        os:getenv()
+    ),
+    AllowedPairs = [
+        {binary_to_list(Name), binary_to_list(Value)}
+        || {Name, Value} <- Allowed
+    ],
+    UnsetParent ++ AllowedPairs.
+
+worker_loop(Port) ->
+    receive
+        {invoke, From, Ref, Payload} ->
+            port_command(Port, [Payload, <<"\n">>]),
+            worker_receive_result(Port, From, Ref, <<>>);
+        {invoke_stream, From, Ref, Payload, MaxBytes, Emit} ->
+            port_command(Port, [Payload, <<"\n">>]),
+            worker_receive_stream(
+                Port,
+                From,
+                Ref,
+                Emit,
+                <<>>,
+                0,
+                0,
+                false,
+                MaxBytes
+            );
+        {Port, {exit_status, _Status}} ->
+            ok;
+        stop ->
+            close_port(Port)
+    end.
+
+worker_receive_stream(
+    Port,
+    From,
+    Ref,
+    Emit,
+    Buffer,
+    Bytes,
+    Chunks,
+    Started,
+    MaxBytes
+) ->
+    receive
+        {Port, {data, Data}} ->
+            NewBuffer = <<Buffer/binary, Data/binary>>,
+            consume_stream_buffer(
+                Port,
+                From,
+                Ref,
+                Emit,
+                NewBuffer,
+                Bytes,
+                Chunks,
+                Started,
+                MaxBytes
+            );
+        {Port, {exit_status, Status}} ->
+            From ! {Ref, {error, iolist_to_binary(io_lib:format(
+                "streaming child exited with status ~p",
+                [Status]
+            ))}};
+        stop ->
+            close_port(Port),
+            From ! {Ref, {error, <<"lambda streaming worker stopped">>}}
+    end.
+
+consume_stream_buffer(
+    Port,
+    From,
+    Ref,
+    Emit,
+    Buffer,
+    Bytes,
+    Chunks,
+    Started,
+    MaxBytes
+) ->
+    case binary:match(Buffer, <<"\n">>) of
+        nomatch when byte_size(Buffer) > ?MAX_STREAM_FRAME_BYTES ->
+            fail_stream_protocol(
+                Port,
+                From,
+                Ref,
+                <<"lambda stream frame exceeded byte limit">>
+            );
+        nomatch ->
+            worker_receive_stream(
+                Port,
+                From,
+                Ref,
+                Emit,
+                Buffer,
+                Bytes,
+                Chunks,
+                Started,
+                MaxBytes
+            );
+        {Index, 1} ->
+            Line = binary:part(Buffer, 0, Index),
+            Rest = binary:part(
+                Buffer,
+                Index + 1,
+                byte_size(Buffer) - Index - 1
+            ),
+            case decode_stream_frame(Line, Started, Bytes, Chunks, MaxBytes) of
+                {start, NewStarted} ->
+                    consume_stream_buffer(
+                        Port,
+                        From,
+                        Ref,
+                        Emit,
+                        Rest,
+                        Bytes,
+                        Chunks,
+                        NewStarted,
+                        MaxBytes
+                    );
+                {chunk, Chunk, NewBytes, NewChunks} ->
+                    %% Emit is synchronous. The Gleam bridge waits for the
+                    %% Mist connection actor to acknowledge its socket send
+                    %% before this worker reads another child frame.
+                    Emit(Chunk),
+                    consume_stream_buffer(
+                        Port,
+                        From,
+                        Ref,
+                        Emit,
+                        Rest,
+                        NewBytes,
+                        NewChunks,
+                        Started,
+                        MaxBytes
+                    );
+                done ->
+                    From ! {Ref, {ok, Bytes, Chunks}},
+                    worker_loop(Port);
+                {stream_error, Reason} ->
+                    From ! {Ref, {stream_error, Reason, Bytes, Chunks}},
+                    worker_loop(Port);
+                {error, Reason} ->
+                    fail_stream_protocol(Port, From, Ref, Reason)
+            end
+    end.
+
+decode_stream_frame(<<>>, Started, _Bytes, _Chunks, _MaxBytes) ->
+    {start, Started};
+decode_stream_frame(Line, Started, Bytes, Chunks, MaxBytes) ->
+    try json:decode(Line) of
+        #{
+            <<"stream">> := true,
+            <<"event">> := <<"start">>
+        } when Started =:= false ->
+            {start, true};
+        #{
+            <<"stream">> := true,
+            <<"event">> := <<"chunk">>,
+            <<"encoding">> := <<"base64">>,
+            <<"data">> := Encoded
+        } when Started =:= true, is_binary(Encoded) ->
+            Chunk = base64:decode(Encoded),
+            NewBytes = Bytes + byte_size(Chunk),
+            case NewBytes =< MaxBytes of
+                true -> {chunk, Chunk, NewBytes, Chunks + 1};
+                false -> {error, <<"lambda stream exceeded configured byte limit">>}
+            end;
+        #{
+            <<"stream">> := true,
+            <<"event">> := <<"end">>,
+            <<"bytes">> := Bytes
+        } when Started =:= true ->
+            done;
+        #{
+            <<"stream">> := true,
+            <<"event">> := <<"error">>,
+            <<"error">> := Reason
+        } when is_binary(Reason) ->
+            {stream_error, Reason};
+        _ ->
+            {error, <<"invalid lambda stream protocol frame">>}
+    catch
+        _:_ -> {error, <<"invalid lambda stream protocol frame">>}
+    end.
+
+fail_stream_protocol(Port, From, Ref, Reason) ->
+    From ! {Ref, {error, Reason}},
+    close_port(Port).
+
+worker_receive_result(Port, From, Ref, Buffer) ->
+    receive
+        {Port, {data, Data}} ->
+            NewBuffer = <<Buffer/binary, Data/binary>>,
+            case byte_size(NewBuffer) > 1048576 of
+                true ->
+                    From ! {Ref, {error, <<"lambda child result exceeded byte limit">>}};
+                false ->
+                    case binary:match(NewBuffer, <<"\n">>) of
+                        {Index, _Length} ->
+                            Result = binary:part(NewBuffer, 0, Index),
+                            From ! {Ref, {ok, Result}},
+                            worker_loop(Port);
+                        nomatch ->
+                            worker_receive_result(Port, From, Ref, NewBuffer)
+                    end
+            end;
+        {Port, {exit_status, Status}} ->
+            Reason = case Buffer of
+                <<>> ->
+                    iolist_to_binary(io_lib:format("child exited with status ~p", [Status]));
+                _ ->
+                    Preview = binary:part(Buffer, 0, min(byte_size(Buffer), 4096)),
+                    iolist_to_binary(io_lib:format(
+                        "child exited with status ~p: ~s",
+                        [Status, Preview]
+                    ))
+            end,
+            From ! {Ref, {error, Reason}};
+        stop ->
+            close_port(Port),
+            From ! {Ref, {error, <<"lambda child worker stopped">>}}
+    end.
+
+release_worker_in_manager(WorkerKey, LeaseRef) ->
+    case ets:lookup(?WORKERS, WorkerKey) of
+        [{WorkerKey, Worker}] ->
+            case maps:get(lease_ref, Worker, undefined) =:= LeaseRef of
+                true ->
+                    demonitor_lease(Worker),
+                    Released = Worker#{
+                        busy => false,
+                        lease_ref => undefined,
+                        lease_monitor => undefined,
+                        last_used_ms => now_ms()
+                    },
+                    ets:insert(?WORKERS, {WorkerKey, Released}),
+                    ok;
+                false ->
+                    ok
+            end;
+        [] ->
+            ok
+    end.
+
+reap_idle(NowMs) ->
+    _ = manager_call({reap_idle, NowMs}),
+    ok.
+
+reap_idle_in_manager(NowMs) ->
+    lists:foreach(
+        fun({WorkerKey, Worker}) ->
+            LastUsed = maps:get(last_used_ms, Worker),
+            IdleMs = maps:get(idle_ms, Worker),
+            Busy = maps:get(busy, Worker, false),
+            Provisioned = maps:get(provisioned, Worker, false),
+            case not Busy andalso not Provisioned andalso NowMs - LastUsed > IdleMs of
+                true ->
+                    close_worker(maps:get(pid, Worker)),
+                    delete_worker(WorkerKey),
+                    bump(child_destroys_total, 1);
+                false ->
+                    ok
+            end
+        end,
+        ets:tab2list(?WORKERS)
+    ),
+    ok.
+
+remove_worker_in_manager(WorkerKey, LeaseRef) ->
+    case ets:lookup(?WORKERS, WorkerKey) of
+        [{WorkerKey, Worker}] ->
+            case maps:get(lease_ref, Worker, undefined) =:= LeaseRef of
+                true ->
+                    close_worker(maps:get(pid, Worker)),
+                    delete_worker(WorkerKey);
+                false ->
+                    ok
+            end;
+        [] ->
+            ok
+    end,
+    ok.
+
+destroy_pool_in_manager(PoolKey) ->
+    ets:delete(?PROVISIONED, PoolKey),
+    Matching = lists:filter(
+        fun({WorkerKey, Worker}) ->
+            WorkerKey =:= PoolKey orelse maps:get(pool_key, Worker) =:= PoolKey
+        end,
+        ets:tab2list(?WORKERS)
+    ),
+    lists:foreach(
+        fun({WorkerKey, Worker}) ->
+            close_worker(maps:get(pid, Worker)),
+            delete_worker(WorkerKey),
+            bump(child_destroys_total, 1)
+        end,
+        Matching
+    ),
+    case Matching of
+        [] -> {ok, <<"not-found">>};
+        _ -> {ok, <<"destroyed">>}
+    end.
+
+delete_worker(WorkerKey) ->
+    case ets:lookup(?WORKERS, WorkerKey) of
+        [{WorkerKey, Worker}] ->
+            demonitor_worker(Worker),
+            demonitor_lease(Worker),
+            ets:delete(?WORKERS, WorkerKey);
+        [] ->
+            ok
+    end.
+
+delete_worker_by_monitor(Monitor) ->
+    lists:foreach(
+        fun({WorkerKey, Worker}) ->
+            WorkerMonitor = maps:get(monitor, Worker, undefined),
+            LeaseMonitor = maps:get(lease_monitor, Worker, undefined),
+            case {WorkerMonitor =:= Monitor, LeaseMonitor =:= Monitor} of
+                {true, _} ->
+                    demonitor_lease(Worker),
+                    ets:delete(?WORKERS, WorkerKey);
+                {false, true} ->
+                    %% The request process vanished while its child was still
+                    %% executing. Kill that child rather than ever returning it
+                    %% to the idle pool with unknown protocol state.
+                    close_worker(maps:get(pid, Worker)),
+                    demonitor_worker(Worker),
+                    ets:delete(?WORKERS, WorkerKey),
+                    bump(abandoned_leases_total, 1);
+                _ ->
+                    ok
+            end
+        end,
+        ets:tab2list(?WORKERS)
+    ).
+
+demonitor_worker(Worker) ->
+    case maps:get(monitor, Worker, undefined) of
+        undefined -> ok;
+        Monitor -> erlang:demonitor(Monitor, [flush])
+    end.
+
+demonitor_lease(Worker) ->
+    case maps:get(lease_monitor, Worker, undefined) of
+        undefined -> ok;
+        Monitor -> erlang:demonitor(Monitor, [flush])
+    end.
+
+close_port(Port) ->
+    case port_alive(Port) of
+        true ->
+            try port_close(Port)
+            catch
+                _:_ -> ok
+            end;
+        false -> ok
+    end.
+
+port_alive(Port) ->
+    is_port(Port) andalso erlang:port_info(Port) =/= undefined.
+
+close_worker(Pid) ->
+    case worker_alive(Pid) of
+        true -> Pid ! stop;
+        false -> ok
+    end.
+
+worker_alive(Pid) ->
+    is_pid(Pid) andalso erlang:is_process_alive(Pid).
+
+metric_line(Name, Value) ->
+    io_lib:format("~s{service=\"dd-gleam-lambda-runner\"} ~p~n", [Name, Value]).
+
+get_metric(Name) ->
+    case ets:lookup(?METRICS, Name) of
+        [{Name, Value}] -> Value;
+        [] -> 0
+    end.
+
+bump(Name, Amount) ->
+    ets:update_counter(?METRICS, Name, Amount, {Name, 0}).
+
+byte_bump(Name, Data) ->
+    bump(Name, byte_size(Data)).
+
+now_ms() ->
+    erlang:system_time(millisecond).
+
+max_int(Value, Min) when is_integer(Value), Value >= Min ->
+    Value;
+max_int(_Value, Min) ->
+    Min.
+
+clamp_int(Value, Min, _Max) when is_integer(Value), Value < Min ->
+    Min;
+clamp_int(Value, _Min, Max) when is_integer(Value), Value > Max ->
+    Max;
+clamp_int(Value, _Min, _Max) when is_integer(Value) ->
+    Value;
+clamp_int(_Value, Min, _Max) ->
+    Min.
+
+bool_int(true) -> 1;
+bool_int(false) -> 0.
+
+to_binary(Value) when is_binary(Value) ->
+    Value;
+to_binary(Value) when is_list(Value) ->
+    unicode:characters_to_binary(Value);
+to_binary(Value) ->
+    unicode:characters_to_binary(io_lib:format("~p", [Value])).
+
+normalize_json_payload(Value) ->
+    unicode:characters_to_binary(string:trim(binary_to_list(to_binary(Value)))).
+
+json_escape(Value0) ->
+    Value = to_binary(Value0),
+    Slash = binary:replace(Value, <<"\\">>, <<"\\\\">>, [global]),
+    Quote = binary:replace(Slash, <<"\"">>, <<"\\\"">>, [global]),
+    Newline = binary:replace(Quote, <<"\n">>, <<"\\n">>, [global]),
+    Return = binary:replace(Newline, <<"\r">>, <<"\\r">>, [global]),
+    binary:replace(Return, <<"\t">>, <<"\\t">>, [global]).
+
+json_string_field(Json0, Field0) ->
+    Json = to_binary(Json0),
+    Field = to_binary(Field0),
+    Pattern = iolist_to_binary(["\"", Field, "\"\\s*:\\s*\"((?:\\\\.|[^\"])*)\""]),
+    case re:run(Json, Pattern, [{capture, [1], binary}]) of
+        {match, [Value]} -> json_unescape_string(Value);
+        nomatch -> <<>>
+    end.
+
+%% runtimeConfig is deliberately flat. Returning no object for a nested or
+%% malformed value makes resource selection fall back to operator-safe defaults
+%% instead of allowing an ambiguous parse at the isolation boundary.
+json_flat_object_field(Json0, Field0) ->
+    Json = to_binary(Json0),
+    Field = to_binary(Field0),
+    Pattern = iolist_to_binary([
+        "\"",
+        Field,
+        "\"\\s*:\\s*\\{([^{}]*)\\}"
+    ]),
+    case re:run(Json, Pattern, [{capture, [1], binary}]) of
+        {match, [Value]} -> Value;
+        nomatch -> <<>>
+    end.
+
+json_bool_field(Json0, Field0, Default) ->
+    Json = to_binary(Json0),
+    Field = to_binary(Field0),
+    Pattern = iolist_to_binary(["\"", Field, "\"\\s*:\\s*(true|false)"]),
+    case re:run(Json, Pattern, [{capture, [1], binary}]) of
+        {match, [<<"true">>]} -> true;
+        {match, [<<"false">>]} -> false;
+        nomatch -> Default
+    end.
+
+json_int_field(Json0, Field0, Default) ->
+    Json = to_binary(Json0),
+    Field = to_binary(Field0),
+    Pattern = iolist_to_binary(["\"", Field, "\"\\s*:\\s*([0-9]+)"]),
+    case re:run(Json, Pattern, [{capture, [1], binary}]) of
+        {match, [Value]} ->
+            case string:to_integer(binary_to_list(Value)) of
+                {Int, _Rest} -> Int;
+                _ -> Default
+            end;
+        nomatch ->
+            Default
+    end.
+
+json_unescape_string(Value0) ->
+    Value1 = binary:replace(Value0, <<"\\\"">>, <<"\"">>, [global]),
+    Value2 = binary:replace(Value1, <<"\\\\">>, <<"\\">>, [global]),
+    Value2.
+
+env_binary(Name, Default) ->
+    dd_cli_config_client_ffi:getenv(Name, Default).
+
+env_int(Name, Default) ->
+    case string:to_integer(binary_to_list(env_binary(Name, integer_to_binary(Default)))) of
+        {Value, []} -> Value;
+        _ -> Default
+    end.
+
+csv_env(Name, Default) ->
+    Raw = env_binary(Name, Default),
+    Tokens = string:tokens(binary_to_list(Raw), ","),
+    lists:filtermap(
+        fun(Token0) ->
+            Trimmed = to_binary(string:trim(Token0)),
+            case Trimmed of
+                <<>> -> false;
+                _ -> {true, canonical_runtime(Trimmed)}
+            end
+        end,
+        Tokens
+    ).
+
+safe_container_image(Image) ->
+    re:run(Image, "^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,511}$", [{capture, none}]) =:= match.
+
+safe_entry_command(Command) ->
+    byte_size(Command) =< 512 andalso
+    binary:match(Command, <<0>>) =:= nomatch.
+
+safe_reuse_key(ReuseKey) ->
+    re:run(ReuseKey, "^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$", [{capture, none}]) =:= match.
+
+shell_word(Value0) ->
+    Value = to_binary(Value0),
+    Escaped = binary:replace(Value, <<"\'">>, <<"\'\"'\"\'">>, [global]),
+    iolist_to_binary(["'", Escaped, "'"]).
+
+safe_label(Value) ->
+    binary_to_list(binary:replace(Value, <<"\"">>, <<"">>, [global])).
