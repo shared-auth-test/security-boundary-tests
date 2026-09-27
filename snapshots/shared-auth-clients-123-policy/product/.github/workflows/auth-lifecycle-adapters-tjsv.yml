@@ -1,0 +1,125 @@
+name: Auth lifecycle adapter TypeSpec and JSON Schema parity
+
+on:
+  pull_request:
+    paths:
+      - "formal/auth-lifecycle.json"
+      - "clients/auth-lifecycle-adapters.tsp"
+      - "clients/auth-lifecycle-adapters.schema.json"
+      - "clients/auth-lifecycle-adapters.json"
+      - "clients/ts/src/auth_lifecycle*.ts"
+      - "clients/ts/src/lifecycle.ts"
+      - "clients/ts/package.json"
+      - "clients/ts/package-lock.json"
+      - "clients/dart/lib/src/auth_lifecycle*.dart"
+      - "clients/dart/pubspec.yaml"
+      - "scripts/check-auth-lifecycle-ts.mjs"
+      - "scripts/check-auth-lifecycle-adapters.py"
+      - "tests/tjsv/auth-lifecycle-known-bad.schema.json"
+      - ".github/workflows/auth-lifecycle-adapters-tjsv.yml"
+  push:
+    branches: [main]
+    paths:
+      - "formal/auth-lifecycle.json"
+      - "clients/auth-lifecycle-adapters.tsp"
+      - "clients/auth-lifecycle-adapters.schema.json"
+      - "clients/auth-lifecycle-adapters.json"
+      - "clients/ts/src/auth_lifecycle*.ts"
+      - "clients/ts/src/lifecycle.ts"
+      - "clients/ts/package.json"
+      - "clients/ts/package-lock.json"
+      - "clients/dart/lib/src/auth_lifecycle*.dart"
+      - "clients/dart/pubspec.yaml"
+      - "scripts/check-auth-lifecycle-ts.mjs"
+      - "scripts/check-auth-lifecycle-adapters.py"
+      - "tests/tjsv/auth-lifecycle-known-bad.schema.json"
+      - ".github/workflows/auth-lifecycle-adapters-tjsv.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: auth-lifecycle-adapter-tjsv-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  peer-parity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out exact source head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Compare independent lifecycle adapter authorities
+        uses: ORESoftware/typespec-json-schema-validator@bd503465dab8c5148fee722b443ed04ff126c9bf
+        with:
+          typespec: clients/auth-lifecycle-adapters.tsp
+          schema: clients/auth-lifecycle-adapters.schema.json
+          report: .typespec-json-schema-validator/auth-lifecycle-adapters/report.json
+          sarif: .typespec-json-schema-validator/auth-lifecycle-adapters/report.sarif
+          contract_ir: .typespec-json-schema-validator/auth-lifecycle-adapters/contract-ir.json
+          output_dir: .typespec-json-schema-validator/auth-lifecycle-adapters/generated
+          max_probes: "64"
+          seal_object_schemas: "true"
+          polymorphic_models_strategy: oneOf
+          quiet: "true"
+
+      - name: Prove TJSV rejects an incompatible peer authority
+        id: negative_canary
+        continue-on-error: true
+        uses: ORESoftware/typespec-json-schema-validator@bd503465dab8c5148fee722b443ed04ff126c9bf
+        with:
+          typespec: clients/auth-lifecycle-adapters.tsp
+          schema: tests/tjsv/auth-lifecycle-known-bad.schema.json
+          report: .typespec-json-schema-validator/auth-lifecycle-adapters-negative/report.json
+          sarif: .typespec-json-schema-validator/auth-lifecycle-adapters-negative/report.sarif
+          contract_ir: .typespec-json-schema-validator/auth-lifecycle-adapters-negative/contract-ir.json
+          output_dir: .typespec-json-schema-validator/auth-lifecycle-adapters-negative/generated
+          max_probes: "16"
+          seal_object_schemas: "true"
+          polymorphic_models_strategy: oneOf
+          quiet: "true"
+
+      - name: Require fail-closed semantic-drift evidence
+        if: always()
+        shell: bash
+        env:
+          TJSV_NEGATIVE_OUTCOME: ${{ steps.negative_canary.outcome }}
+        run: |
+          set -euo pipefail
+          if [[ "${TJSV_NEGATIVE_OUTCOME}" != "failure" ]]; then
+            echo "TJSV negative canary unexpectedly did not fail: ${TJSV_NEGATIVE_OUTCOME}" >&2
+            exit 1
+          fi
+          node <<'NODE'
+          const fs = require('node:fs');
+          const receiptPath = '.typespec-json-schema-validator/auth-lifecycle-adapters-negative/report.json';
+          if (!fs.existsSync(receiptPath)) {
+            throw new Error(`TJSV negative canary did not emit ${receiptPath}`);
+          }
+          const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
+          if (receipt.status !== 'stopped_for_evaluation') {
+            throw new Error(`expected stopped_for_evaluation, got ${JSON.stringify(receipt.status)}`);
+          }
+          NODE
+
+      - name: Verify formal TypeScript projection
+        run: node scripts/check-auth-lifecycle-ts.mjs
+
+      - name: Verify cross-runtime adapter evidence
+        run: python3 scripts/check-auth-lifecycle-adapters.py
+
+      - name: Retain deterministic lifecycle adapter evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: shared-auth-lifecycle-adapter-tjsv-${{ github.sha }}
+          path: |
+            .typespec-json-schema-validator/auth-lifecycle-adapters/
+            .typespec-json-schema-validator/auth-lifecycle-adapters-negative/
+          if-no-files-found: warn
+          retention-days: 7
