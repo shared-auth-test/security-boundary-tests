@@ -12,8 +12,7 @@ use std::collections::BTreeSet;
 use uuid::Uuid;
 
 use crate::oauth_as::{
-    scope_is_wellformed, MAX_SCOPE_BYTES, MAX_SCOPE_ENTRIES, OFFLINE_ACCESS_SCOPE,
-    PROTOCOL_SCOPE,
+    scope_is_wellformed, MAX_SCOPE_BYTES, MAX_SCOPE_ENTRIES, OFFLINE_ACCESS_SCOPE, PROTOCOL_SCOPE,
 };
 
 pub const OAUTH_CLIENT_CREDENTIAL_CLASS: &str = "oauth_client";
@@ -107,7 +106,7 @@ impl WorkloadClientBinding {
 
         let mut effective = selected.to_vec();
         effective.sort_unstable();
-        return Ok(effective);
+        Ok(effective)
     }
 }
 
@@ -160,7 +159,7 @@ impl WorkloadSessionSnapshot {
             return false;
         }
 
-        return true;
+        true
     }
 }
 
@@ -193,7 +192,7 @@ pub fn validate_machine_scope_set(scopes: &[String]) -> Result<(), WorkloadScope
         }
     }
 
-    return Ok(());
+    Ok(())
 }
 
 #[cfg(test)]
@@ -201,16 +200,16 @@ mod tests {
     use super::*;
 
     fn principal() -> WorkloadPrincipal {
-        return WorkloadPrincipal {
+        WorkloadPrincipal {
             service_account_id: Uuid::from_u128(10),
             application_id: Uuid::from_u128(20),
             status: WorkloadStatus::Active,
             auth_epoch: 7,
-        };
+        }
     }
 
     fn binding() -> WorkloadClientBinding {
-        return WorkloadClientBinding {
+        WorkloadClientBinding {
             client_id: "svc-build".to_string(),
             service_account_id: Uuid::from_u128(10),
             application_id: Uuid::from_u128(20),
@@ -219,11 +218,11 @@ mod tests {
             credential_epoch: 3,
             allowed_scopes: vec!["build:read".to_string(), "build:write".to_string()],
             default_scopes: vec!["build:read".to_string()],
-        };
+        }
     }
 
     fn session() -> WorkloadSessionSnapshot {
-        return WorkloadSessionSnapshot {
+        WorkloadSessionSnapshot {
             session_id: Uuid::from_u128(30),
             service_account_id: Uuid::from_u128(10),
             client_id: "svc-build".to_string(),
@@ -234,16 +233,13 @@ mod tests {
             scopes: vec!["build:read".to_string()],
             expires_at_unix: 2_000,
             revoked: false,
-        };
+        }
     }
 
     #[test]
     fn machine_scope_uses_defaults_without_human_consent() {
         let effective = binding()
-            .effective_scope(
-                &[],
-                &["build:read".to_string(), "build:write".to_string()],
-            )
+            .effective_scope(&[], &["build:read".to_string(), "build:write".to_string()])
             .unwrap();
         assert_eq!(effective, vec!["build:read"]);
     }
@@ -265,10 +261,8 @@ mod tests {
 
     #[test]
     fn duplicate_machine_scope_is_rejected() {
-        let result = validate_machine_scope_set(&[
-            "build:read".to_string(),
-            "build:read".to_string(),
-        ]);
+        let result =
+            validate_machine_scope_set(&["build:read".to_string(), "build:read".to_string()]);
         assert_eq!(result, Err(WorkloadScopeError::Duplicate));
     }
 
