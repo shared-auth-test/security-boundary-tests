@@ -78,6 +78,7 @@ jobs:
       - name: Build the exact client source for the focused runtime test
         run: >-
           npx tsc src/index.ts
+          --ignoreConfig
           --target es2022
           --module esnext
           --moduleResolution bundler
