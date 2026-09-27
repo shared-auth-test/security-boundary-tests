@@ -1,0 +1,11 @@
+format = "ores.core-source-lock/v1"
+status = "bootstrap"
+interfaces_repository = "shared-auth/shared-auth-interfaces"
+typespec_commit = "UNPINNED"
+typespec_sha256 = "UNPINNED"
+json_schema_commit = "UNPINNED"
+json_schema_sha256 = "UNPINNED"
+comparator_version = "BOOTSTRAP"
+
+# Bootstrap placeholders block release. TypeSpec and JSON Schema/OpenAPI remain
+# independent authored inputs pinned to the same reviewed interfaces revision.
