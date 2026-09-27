@@ -91,6 +91,7 @@ jobs:
           set -euo pipefail
           cargo fmt --all -- --check
           cargo test workload::tests
+          cargo test workload::store::tests
           cargo test workload_token::tests
           cargo test token::minter::tests::workload_
           cargo clippy --all-targets -- -D warnings
