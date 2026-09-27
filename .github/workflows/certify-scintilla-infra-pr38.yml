@@ -1,0 +1,60 @@
+name: certify Scintilla infra PR38 lifecycle
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/certify-scintilla-infra-pr38.yml"
+      - "cert/scintilla-infra-pr38/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: "24"
+
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: 1.14.0
+
+      - name: Verify exact source identity
+        run: |
+          set -euo pipefail
+          root=cert/scintilla-infra-pr38
+          test "$(tr -d '\n' < "$root/SOURCE_SHA")" = "68f03630fe6861e8410a2424b1ba2564c39e0454"
+          test "$(git hash-object "$root/fleet/nixos/scintilla-runtime.nix")" = "7225d419eda027cf16c0563f5270dc5ab0fff3bf"
+          test "$(git hash-object "$root/fleet/colmena-hive.nix")" = "c0521423f6d1c2286584f415aede9cdd5473e079"
+          test "$(git hash-object "$root/infra/fleet/aws/main.tf")" = "7b994f74bdff68d87a4ad7c324602e7bc52511d0"
+          test "$(git hash-object "$root/infra/fleet/gcp/main.tf")" = "474771ebcc393859c76598a30325d43b256dc2f1"
+          test "$(git hash-object "$root/tests/fleet-contract.test.mjs")" = "9094891a674d94ad275811dd56950b12e11d67e3"
+
+      - name: Parse NixOS lifecycle module
+        run: nix-instantiate --parse cert/scintilla-infra-pr38/fleet/nixos/scintilla-runtime.nix >/dev/null
+
+      - name: Run exact fleet boundary contracts
+        working-directory: cert/scintilla-infra-pr38
+        run: node --test tests/fleet-contract.test.mjs
+
+      - name: Validate AWS OpenTofu-compatible module
+        run: |
+          terraform -chdir=cert/scintilla-infra-pr38/infra/fleet/aws fmt -diff -check
+          terraform -chdir=cert/scintilla-infra-pr38/infra/fleet/aws init -backend=false
+          terraform -chdir=cert/scintilla-infra-pr38/infra/fleet/aws validate
+
+      - name: Validate GCP OpenTofu-compatible module
+        run: |
+          terraform -chdir=cert/scintilla-infra-pr38/infra/fleet/gcp fmt -diff -check
+          terraform -chdir=cert/scintilla-infra-pr38/infra/fleet/gcp init -backend=false
+          terraform -chdir=cert/scintilla-infra-pr38/infra/fleet/gcp validate
