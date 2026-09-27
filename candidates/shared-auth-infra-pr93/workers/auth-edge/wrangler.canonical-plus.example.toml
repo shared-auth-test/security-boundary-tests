@@ -1,0 +1,34 @@
+name = "canonical-plus-auth-edge"
+main = "src/canonical-plus.mjs"
+compatibility_date = "2026-08-05"
+workers_dev = false
+
+# Browser HTML and host-only cookies live on app.canonical.plus. The API host
+# accepts Shared Auth bearer tokens only and returns JSON 401 responses instead
+# of browser redirects. Both hosts proxy their shipped Rust route families,
+# whose authorization is independently revalidated before database access.
+routes = [
+  { pattern = "app.canonical.plus/u/*", zone_name = "canonical.plus" },
+  { pattern = "app.canonical.plus/api/v1/quotes*", zone_name = "canonical.plus" },
+  { pattern = "app.canonical.plus/ws/quotes*", zone_name = "canonical.plus" },
+  { pattern = "api.canonical.plus/v1/quotes*", zone_name = "canonical.plus" },
+  { pattern = "api.canonical.plus/v1/ws*", zone_name = "canonical.plus" },
+]
+
+[vars]
+CANONICAL_API_HOST = "api.canonical.plus"
+SHARED_AUTH_BASE = "https://app.canonical.plus/shared-auth"
+SHARED_AUTH_JWKS_URL = "https://app.canonical.plus/shared-auth/.well-known/jwks.json"
+AUTH_ISSUER = "https://app.canonical.plus/shared-auth"
+AUTH_AUDIENCE = "canonical-plus-web"
+LOGIN_URL = "https://app.canonical.plus/shared-auth/auth/browser/sign-in"
+SESSION_COOKIE_NAME = "__Host-canonical-customer-auth"
+REFRESH_COOKIE_NAME = "__Host-canonical-customer-auth-refresh"
+REFRESH_PATH = "/auth/refresh"
+PROTECTED_PATH_PREFIXES = "/u/,/api/v1/quotes,/ws/quotes,/v1/quotes,/v1/ws"
+PUBLIC_PATH_PREFIXES = "/shared-auth/,/health,/assets/"
+JWKS_TTL_SECONDS = "300"
+JWKS_STALE_GRACE_SECONDS = "3600"
+ACCESS_COOKIE_MAX_AGE_SECONDS = "900"
+REFRESH_COOKIE_MAX_AGE_SECONDS = "2592000"
+RACE_DEADLINE_MS = "1500"
