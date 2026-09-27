@@ -33,7 +33,7 @@ jobs:
           test "$(git hash-object "$root/src/central_config.rs")" = "99177b61e3deb461eb0576fded26dcd64218e5b5"
           test "$(git hash-object "$root/src/config.rs")" = "1796cc1bb4312c6f770148b471303df3ef286795"
           test "$(git hash-object "$root/src/config_discovery.rs")" = "24a16cca9bf8897658c98b3b81696f360380d540"
-          test "$(git hash-object "$root/src/consumer_policy.rs")" = "bc05b6ee51cf7f05207c7009e95ef4779ba37ac8"
+          test "$(git hash-object "$root/src/consumer_policy.rs")" = "1abe657aa93b282ee380fc33d6191367c453c5a2"
           test "$(git hash-object "$root/src/lib.rs")" = "38ea4fbe0cf637fb3fe249116a9d103d6b1da97b"
           test "$(git hash-object "$root/src/proximity.rs")" = "08e99abde28f45406bd9dc6d7d808d2d94b6c4bd"
           test "$(git hash-object "$root/src/shared_auth_config.rs")" = "59d4413d48dcb1ab6fce270bd1da05b84e61d12b"
