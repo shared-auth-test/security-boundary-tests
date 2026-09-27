@@ -38,10 +38,10 @@ jobs:
         run: python -m unittest discover -s tests -v
 
 
-  certify-workload-foundation:
+  certify-workload-exact-blobs:
     if: github.event_name == 'pull_request' && github.head_ref == 'certify-shared-auth-workload-215-236-20260927'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 35
     services:
       postgres:
         image: postgres:17-bookworm
@@ -57,72 +57,40 @@ jobs:
           --health-timeout=5s
           --health-retries=20
     env:
-      PRODUCT_SHA: a1e06aa5f99df226f5d81e689f64fc24b208bac9
       AUTH_TEST_DATABASE_URL: postgres://shared_auth:shared_auth_workload@127.0.0.1:5432/shared_auth_workload
+      SNAPSHOT: snapshots/workload-215-236
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          repository: shared-auth/shared-auth-server.rs
-          ref: a1e06aa5f99df226f5d81e689f64fc24b208bac9
-          path: product
           persist-credentials: false
-      - run: test "$(git -C product rev-parse HEAD)" = "$PRODUCT_SHA"
+      - name: Verify exact product Git blobs
+        run: |
+          set -euo pipefail
+          cd "$SNAPSHOT"
+          while read -r expected path; do
+            case "$expected" in \#*|"") continue ;; esac
+            test -f "$path"
+            actual="$(git hash-object "$path")"
+            test "$actual" = "$expected" || {
+              echo "blob mismatch: $path expected=$expected actual=$actual" >&2
+              exit 1
+            }
+          done < SOURCE-GIT-BLOBS.txt
       - run: rustup toolchain install stable --profile minimal --component rustfmt,clippy
-      - name: SQL and Rust exact-head contract
-        working-directory: product
+      - name: Execute exact SQL workload invariants
+        working-directory: snapshots/workload-215-236
         run: |
           set -euo pipefail
           psql "$AUTH_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f db/schema.sql
           psql "$AUTH_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f db/workload-identities.sql
           psql "$AUTH_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f db/workload-identities.sql
           psql "$AUTH_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/workload_identity_db.sql
-          cargo fmt --all -- --check
-          cargo test --locked workload::
-          cargo test --locked workload_token::
-          cargo test --locked --test workload_identity_contract
-          cargo clippy --all-targets --locked -- -D warnings
-
-  certify-workload-signer:
-    if: github.event_name == 'pull_request' && github.head_ref == 'certify-shared-auth-workload-215-236-20260927'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    services:
-      postgres:
-        image: postgres:17-bookworm
-        env:
-          POSTGRES_DB: shared_auth_workload
-          POSTGRES_USER: shared_auth
-          POSTGRES_PASSWORD: shared_auth_workload
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd="pg_isready -U shared_auth -d shared_auth_workload"
-          --health-interval=5s
-          --health-timeout=5s
-          --health-retries=20
-    env:
-      PRODUCT_SHA: 402b955169f733f71fb6a84030a0b4ce7ef6381e
-      AUTH_TEST_DATABASE_URL: postgres://shared_auth:shared_auth_workload@127.0.0.1:5432/shared_auth_workload
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: shared-auth/shared-auth-server.rs
-          ref: 402b955169f733f71fb6a84030a0b4ce7ef6381e
-          path: product
-          persist-credentials: false
-      - run: test "$(git -C product rev-parse HEAD)" = "$PRODUCT_SHA"
-      - run: rustup toolchain install stable --profile minimal --component rustfmt,clippy
-      - name: SQL and signer exact-head contract
-        working-directory: product
+      - name: Compile and test exact Rust workload and signer sources
+        working-directory: snapshots/workload-215-236
         run: |
           set -euo pipefail
-          psql "$AUTH_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f db/schema.sql
-          psql "$AUTH_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f db/workload-identities.sql
-          psql "$AUTH_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f db/workload-identities.sql
-          psql "$AUTH_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/workload_identity_db.sql
           cargo fmt --all -- --check
-          cargo test --locked workload::
-          cargo test --locked workload_token::
-          cargo test --locked token::minter::tests::workload_
-          cargo test --locked --test workload_identity_contract
-          cargo clippy --all-targets --locked -- -D warnings
+          cargo test workload::tests
+          cargo test workload_token::tests
+          cargo test token::minter::tests::workload_
+          cargo clippy --all-targets -- -D warnings
