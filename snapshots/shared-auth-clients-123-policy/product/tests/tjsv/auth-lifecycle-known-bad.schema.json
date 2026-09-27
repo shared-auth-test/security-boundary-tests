@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://shared-auth.invalid/tests/auth-lifecycle-known-bad.schema.json",
+  "title": "Intentional TJSV negative canary - not a contract authority",
+  "description": "This fixture is deliberately incompatible with clients/auth-lifecycle-adapters.tsp. CI must observe stopped_for_evaluation; a passing comparison is a test failure.",
+  "type": "object",
+  "$defs": {
+    "lifecycleContract": {
+      "type": "object",
+      "required": ["schemaVersion"],
+      "properties": {
+        "schemaVersion": {
+          "const": 2
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
