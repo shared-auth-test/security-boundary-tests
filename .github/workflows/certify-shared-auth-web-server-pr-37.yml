@@ -1,0 +1,77 @@
+name: certify Shared Auth web-server PR 37
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/certify-shared-auth-web-server-pr-37.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      PRODUCT_HEAD: 033918a3d42a2a7664c8673ff4f599861c381cb7
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+    steps:
+      - name: Require protected read credential
+        env:
+          TEST_FLEET_READ_TOKEN: ${{ secrets.TEST_FLEET_READ_TOKEN }}
+        run: test -n "$TEST_FLEET_READ_TOKEN"
+
+      - name: Check out exact product head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: shared-auth/shared-auth-web-server.rs
+          ref: ${{ env.PRODUCT_HEAD }}
+          token: ${{ secrets.TEST_FLEET_READ_TOKEN }}
+          persist-credentials: false
+          show-progress: false
+          path: product
+
+      - name: Verify immutable product head
+        run: test "$(git -C product rev-parse HEAD)" = "$PRODUCT_HEAD"
+
+      - name: Configure ephemeral private dependency access
+        env:
+          TEST_FLEET_READ_TOKEN: ${{ secrets.TEST_FLEET_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config --global url."https://x-access-token:${TEST_FLEET_READ_TOKEN}@github.com/".insteadOf "https://github.com/"
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Format
+        working-directory: product
+        run: cargo fmt --all -- --check
+
+      - name: Strict Clippy
+        working-directory: product
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Test all features
+        working-directory: product
+        run: cargo test --all-features
+
+      - name: Run functional-programming ratchet
+        working-directory: product
+        run: |
+          python3 tools/fp-conformance/fp_conformance.py .             --json /tmp/web-server-fp-findings.json             --budget tools/fp-conformance/budget.json             --limit 60
+
+      - name: Prove source remained unchanged
+        working-directory: product
+        run: git diff --exit-code HEAD
+
+      - name: Remove private dependency access
+        if: always()
+        env:
+          TEST_FLEET_READ_TOKEN: ${{ secrets.TEST_FLEET_READ_TOKEN }}
+        run: |
+          git config --global --remove-section "url.https://x-access-token:${TEST_FLEET_READ_TOKEN}@github.com/" || true
