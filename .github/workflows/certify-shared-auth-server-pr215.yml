@@ -1,0 +1,92 @@
+name: certify Shared Auth workload identity PR 215
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/certify-shared-auth-server-pr215.yml'
+      - 'docs/shared-auth-server-pr215-certification.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  workload-identity-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_DB: shared_auth_workload
+          POSTGRES_USER: shared_auth
+          POSTGRES_PASSWORD: shared_auth_workload
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U shared_auth -d shared_auth_workload"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      AUTH_TEST_DATABASE_URL: postgres://shared_auth:shared_auth_workload@127.0.0.1:5432/shared_auth_workload
+    steps:
+      - name: Check out certification repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          show-progress: false
+
+      - name: Check out exact Shared Auth product head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: shared-auth/shared-auth-server.rs
+          ref: a1e06aa5f99df226f5d81e689f64fc24b208bac9
+          path: product
+          persist-credentials: false
+          show-progress: false
+
+      - name: Verify exact product head and workload workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C product rev-parse HEAD)" = "a1e06aa5f99df226f5d81e689f64fc24b208bac9"
+          test "$(git hash-object product/.github/workflows/workload-identity-contract.yml)" = "da5e6761b329ede2ccffcb29eeb5f9549f1d3412"
+
+      - name: Install Rust
+        shell: bash
+        run: rustup toolchain install stable --profile minimal --component rustfmt,clippy
+
+      - name: Apply baseline identity schema
+        working-directory: product
+        run: psql "$AUTH_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f db/schema.sql
+
+      - name: Apply workload identity schema twice
+        working-directory: product
+        run: |
+          psql "$AUTH_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f db/workload-identities.sql
+          psql "$AUTH_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f db/workload-identities.sql
+
+      - name: Exercise workload database invariants
+        working-directory: product
+        run: psql "$AUTH_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/workload_identity_db.sql
+
+      - name: Check formatting
+        working-directory: product
+        run: cargo fmt --all -- --check
+
+      - name: Compile and run workload identity tests
+        working-directory: product
+        run: cargo test --locked workload::
+
+      - name: Compile and run workload token-profile tests
+        working-directory: product
+        run: cargo test --locked workload_token::
+
+      - name: Run workload contract integration tests
+        working-directory: product
+        run: cargo test --locked --test workload_identity_contract
+
+      - name: Clippy workload foundation
+        working-directory: product
+        run: cargo clippy --all-targets --locked -- -D warnings
