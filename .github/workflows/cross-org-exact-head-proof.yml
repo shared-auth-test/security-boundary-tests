@@ -1,0 +1,78 @@
+name: cross-org exact-head proof
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/cross-org-exact-head-proof.yml
+  push:
+    branches:
+      - proof/cross-org-ores-wasmx-20260928
+
+permissions:
+  contents: read
+
+jobs:
+  wasmx:
+    name: wasmx-${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact wasmx head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: wasm-xprs/wasmx-desktop-daemon
+          ref: 79faf3df3ce78fa3902ededc04912261fcff3312
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Verify exact wasmx head
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "79faf3df3ce78fa3902ededc04912261fcff3312"
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.96.0
+          components: rustfmt,clippy
+      - name: Format
+        if: runner.os == 'Linux'
+        run: cargo fmt --all -- --check
+      - name: Check
+        run: cargo check --all-targets
+      - name: Test
+        run: cargo test --all-targets
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+  ores-compose:
+    name: ores-compose-${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact ores-compose head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ORESoftware/ores-compose
+          ref: 20aa873ee10359a63043f4284ba6e2e6e533f37f
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Verify exact ores-compose head
+        run: test "$(git rev-parse HEAD)" = "20aa873ee10359a63043f4284ba6e2e6e533f37f"
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with:
+          toolchain: 1.88.0
+          components: rustfmt,clippy
+      - name: Format
+        if: runner.os == 'Linux'
+        run: cargo fmt --all -- --check
+      - name: Focused working-directory race tests
+        run: cargo test --locked revalidates_working_directory -- --nocapture
+      - name: Full tests
+        run: cargo test --all-targets
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
