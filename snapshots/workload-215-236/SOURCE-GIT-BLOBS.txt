@@ -1,0 +1,15 @@
+# Product exact heads
+# foundation PR 215: 91a7145583ea88632f43a48366e9bd81edf496a6
+# signer PR 236: d83bd26c68d7e7e86f53d715603d7be31e11d82f
+# Format: git-blob-sha path
+61ae66c164f79a96c02ea7c2ecd05ecbc43c4d58 db/schema.sql
+a296480557e0ff5b56abbeef8f8503c101e4a8dd db/workload-identities.sql
+9a9a4341468a631e4f6a6528b7179d8b851b2c7e tests/workload_identity_db.sql
+601b6e97be8a4aed42e57a4acd523f5dd0ed5c56 src/workload.rs
+386521fda9c74607cad608691cee11e5b4179a0e src/workload_token.rs
+c8578db78fc9db195bb6c5920f6c99430b66ebbf src/token/claims.rs
+ec9ef60545730c2cea5ffa07958a10129e63dbe3 src/token/assurance.rs
+f08932da78d724c587779aa79c06b6f2370bcc9f src/token/jwks.rs
+de8da0a0ee61c9aaa97ec18877ba8477df1282c2 src/token/minter.rs
+696d315ee97287fde383c82363eeb867c69a7ac4 src/workload/store.rs
+b13ef6ba2fd610992ef04205f5d5fde3070b9b75 src/token/mod.rs

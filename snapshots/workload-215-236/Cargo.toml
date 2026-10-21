@@ -1,0 +1,23 @@
+[package]
+name = "shared-auth-workload-proof"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+anyhow = "1"
+jsonwebtoken = { version = "11", features = ["aws_lc_rs"] }
+p256 = { version = "0.13", features = ["ecdsa", "jwk", "pem", "pkcs8"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+uuid = { version = "1", features = ["serde", "v4"] }
+
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+sea-orm = { version = "2.0", default-features = false, features = [
+  "runtime-tokio-rustls",
+  "sqlx-postgres",
+  "with-chrono",
+  "with-json",
+  "with-uuid",
+] }
