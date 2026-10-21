@@ -1,0 +1,51 @@
+name: Exact-source runtime admission
+on:
+  pull_request:
+    paths: ['source-snapshots/admission/**', 'admission-source.json', 'scripts/verify_admission_snapshot.py', '.github/workflows/runtime-admission.yml']
+  push:
+    branches: [main]
+    paths: ['source-snapshots/admission/**', 'admission-source.json', 'scripts/verify_admission_snapshot.py', '.github/workflows/runtime-admission.yml']
+permissions:
+  contents: read
+jobs:
+  erlang:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - run: python3 scripts/verify_admission_snapshot.py
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
+        with:
+          otp-version: '27'
+      - run: bash source-snapshots/admission/runtime-auth/erlang/check.sh
+  proxies:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - proxy: nginx
+            image: nginx:1.28-alpine
+          - proxy: caddy
+            image: caddy:2.10-alpine
+          - proxy: haproxy
+            image: haproxy:3.2-alpine
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - run: python3 scripts/verify_admission_snapshot.py
+      - name: Pull acceptance-only image and record resolved digest
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: |
+          docker pull "$IMAGE"
+          docker image inspect "$IMAGE" --format '{{json .RepoDigests}}'
+      - name: Native syntax and adversarial HTTP checks
+        env:
+          PROXY: ${{ matrix.proxy }}
+          IMAGE: ${{ matrix.image }}
+        run: python3 source-snapshots/admission/runtime-auth/test/proxy_acceptance.py "$PROXY" "$IMAGE"
