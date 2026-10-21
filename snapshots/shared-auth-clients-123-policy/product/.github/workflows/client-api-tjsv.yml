@@ -1,0 +1,60 @@
+name: Client API TypeSpec and JSON Schema parity
+
+on:
+  pull_request:
+    paths:
+      - "clients/client-api.tsp"
+      - "clients/client-api.schema.json"
+      - "clients/api-surface.json"
+      - "clients/contract-manifest.json"
+      - ".github/workflows/client-api-tjsv.yml"
+  push:
+    branches: [main]
+    paths:
+      - "clients/client-api.tsp"
+      - "clients/client-api.schema.json"
+      - "clients/api-surface.json"
+      - "clients/contract-manifest.json"
+      - ".github/workflows/client-api-tjsv.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: client-api-tjsv-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  peer-parity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out exact source head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Compare independent SDK contract authorities
+        uses: ORESoftware/typespec-json-schema-validator@bd503465dab8c5148fee722b443ed04ff126c9bf
+        with:
+          typespec: clients/client-api.tsp
+          schema: clients/client-api.schema.json
+          report: .typespec-json-schema-validator/client-api/report.json
+          sarif: .typespec-json-schema-validator/client-api/report.sarif
+          contract_ir: .typespec-json-schema-validator/client-api/contract-ir.json
+          output_dir: .typespec-json-schema-validator/client-api/generated
+          max_probes: "64"
+          seal_object_schemas: "true"
+          polymorphic_models_strategy: oneOf
+          quiet: "true"
+
+      - name: Retain deterministic parity evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: shared-auth-client-api-tjsv-${{ github.sha }}
+          path: .typespec-json-schema-validator/client-api/
+          if-no-files-found: warn
+          retention-days: 7

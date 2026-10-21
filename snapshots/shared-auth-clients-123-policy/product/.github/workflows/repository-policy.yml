@@ -1,0 +1,29 @@
+name: repository-policy
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repository-policy-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  policy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify security and hierarchical agent instructions
+        run: scripts/check-repository-policy.sh
+      - name: Test workflow security policy mutations
+        run: python3 scripts/test_check_workflow_security.py
+      - name: Verify immutable Actions and bounded workflows
+        run: python3 scripts/check-workflow-security.py

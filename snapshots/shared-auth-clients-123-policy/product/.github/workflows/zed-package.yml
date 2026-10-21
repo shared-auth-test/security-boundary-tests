@@ -1,0 +1,180 @@
+name: Zed package interoperability
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  zed-package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out package source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: source
+          persist-credentials: false
+
+      - name: Check out pinned zed CLI
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: zed-pkg/zed-cli
+          ref: d70e3ad2ffdd1aaa2f09fd28bb615f9f51005567
+          path: zed-cli
+          persist-credentials: false
+
+      - name: Check out pinned zed interfaces
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: zed-pkg/zed-interfaces
+          ref: 07d01604461d00e237c7d86ad3855464167574ec
+          path: zed-interfaces
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.12"
+
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with:
+          toolchain: stable
+
+      - name: Configure isolated pack output
+        run: echo "ZED_PACK_OUT=$RUNNER_TEMP/zed-pack" >> "$GITHUB_ENV"
+
+      - name: Pack every zed target
+        working-directory: source
+        run: cargo run --quiet --locked --manifest-path ../zed-cli/Cargo.toml -- pack --out "$ZED_PACK_OUT"
+
+      - name: Verify whole-repository and isolated language artifacts
+        working-directory: source
+        run: |
+          python3 - <<'PY'
+          import io
+          import os
+          import pathlib
+          import tarfile
+          import tomllib
+
+          root = pathlib.Path.cwd()
+          out = pathlib.Path(os.environ["ZED_PACK_OUT"])
+          with (root / ".zpkg.toml").open("rb") as handle:
+              manifest = tomllib.load(handle)
+          with (root / ".zpkg.lock").open("rb") as handle:
+              lock = tomllib.load(handle)
+          assert lock["version"] == 1, "unsupported .zpkg.lock version"
+
+          package = manifest["package"]
+          targets = manifest.get("targets", {})
+          assert "repository" in targets, "whole-repository target is required"
+          assert targets["repository"]["dir"] == ".", "repository target must package the repo root"
+
+          expected = {}
+          for target, section in targets.items():
+              name = section.get("name", f"{package['name']}-{target}")
+              archive = out / f"{package['org']}-{name}-{package['version']}.tar.gz"
+              expected[target] = archive
+              assert archive.is_file(), f"missing {target} artifact: {archive.name}"
+
+          actual = set(out.glob("*.tar.gz"))
+          assert actual == set(expected.values()), (
+              f"unexpected artifact set: expected {len(expected)}, got {len(actual)}"
+          )
+
+          archive_members = {}
+          for target, archive in expected.items():
+              with tarfile.open(archive, "r:gz") as packed:
+                  names = packed.getnames()
+                  assert names and all(name == "pkg" or name.startswith("pkg/") for name in names)
+                  assert not any(".." in pathlib.PurePosixPath(name).parts for name in names)
+                  member = packed.extractfile("pkg/.zpkg.toml")
+                  assert member is not None, f"{target} has no derived manifest"
+                  derived = tomllib.load(io.BytesIO(member.read()))
+              expected_name = targets[target].get("name", f"{package['name']}-{target}")
+              assert derived["package"]["name"] == expected_name
+              assert not derived.get("targets"), f"{target} artifact is still polyglot"
+              # Every *language* slice must state what it is for, so a
+              # consumer install can refuse e.g. a jvm package in an npm-only
+              # project. The whole-repository target is language-agnostic by
+              # construction and is correctly left ungated.
+              if target != "repository":
+                  declared = derived["package"].get("language")
+                  assert declared, (
+                      f"{target} artifact declares no language; consumers cannot be guarded"
+                  )
+                  assert declared != "universal", (
+                      f"{target} artifact declares language `universal`; it must name its language"
+                  )
+              archive_members[target] = names
+
+          repository_files = archive_members["repository"]
+          native_manifests = {
+              "nodejs": ["package.json"],
+              "python": ["pyproject.toml", "setup.py"],
+              "golang": ["go.mod"],
+              "rust": ["Cargo.toml"],
+              "rust-wasm": ["Cargo.toml"],
+              "java": ["pom.xml", "build.gradle", "build.gradle.kts"],
+              "csharp": ["*.csproj", "*.nuspec"],
+              "ruby": ["*.gemspec"],
+              "php": ["composer.json"],
+              "dart": ["pubspec.yaml"],
+              "flutter": ["pubspec.yaml"],
+              "elixir": ["mix.exs"],
+              "gleam": ["gleam.toml"],
+              "fsharp": ["*.fsproj"],
+              "ocaml": ["*.opam", "dune-project"],
+              "clojure": ["deps.edn", "project.clj"],
+              "scala": ["build.sbt"],
+              "kotlin": ["build.gradle.kts", "pom.xml"],
+              "erlang": ["rebar.config"],
+              "swift": ["Package.swift"],
+              "cpp": ["CMakeLists.txt"],
+              "zig": ["build.zig"],
+              "haskell": ["*.cabal"],
+              "julia": ["Project.toml"],
+              "r": ["DESCRIPTION"],
+              "nim": ["*.nimble"],
+              "crystal": ["shard.yml"],
+              "lua": ["*.rockspec"],
+              "powershell": ["*.psd1"],
+          }
+          for target, section in targets.items():
+              if target == "repository":
+                  continue
+              source = root / section["dir"]
+              patterns = native_manifests.get(target)
+              if patterns:
+                  native_files = sorted({
+                      path
+                      for pattern in patterns
+                      for path in source.glob(pattern)
+                      if path.is_file()
+                  })
+                  assert native_files, (
+                      f"{target} has no native package-manager manifest ({', '.join(patterns)})"
+                  )
+                  assert any(
+                      f"pkg/{path.relative_to(source).as_posix()}" in archive_members[target]
+                      for path in native_files
+                  ), f"{target} artifact omitted its native package-manager manifest"
+              source_dir = section["dir"].strip("./")
+              prefix = f"pkg/{source_dir}/"
+              assert any(name.startswith(prefix) for name in repository_files), (
+                  f"repository artifact does not contain {target} at {section['dir']}"
+              )
+              assert not any(name.startswith(prefix) for name in archive_members[target]), (
+                  f"{target} artifact was not re-rooted"
+              )
+
+          print(f"verified {len(expected)} zed artifacts: repository + {len(expected) - 1} language targets")
+          PY
+
+      - name: Exercise publish planning without uploading
+        working-directory: source
+        run: cargo run --quiet --locked --manifest-path ../zed-cli/Cargo.toml -- publish --dry-run --skip-vcs-checks

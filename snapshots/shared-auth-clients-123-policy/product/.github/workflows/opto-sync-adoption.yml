@@ -1,0 +1,47 @@
+name: Opto Sync adoption
+
+on:
+  push:
+    branches: [main]
+    paths: ['.opto-sync.json', '.github/workflows/opto-sync-adoption.yml']
+  pull_request:
+    paths: ['.opto-sync.json', '.github/workflows/opto-sync-adoption.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout Shared Auth clients
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Checkout pinned Opto Sync validator
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: opto-sync/opto-sync-clients
+          ref: da7459fdf3ce4096ce6b88aeed5fc98066f804d9
+          path: .opto-sync-tools
+          persist-credentials: false
+      - name: Validate manifest and credential boundary
+        run: |
+          set -euo pipefail
+          python3 .opto-sync-tools/scripts/check-adoption-manifest.py .opto-sync.json
+          python3 - <<'PY'
+          import json
+          manifest = json.load(open('.opto-sync.json', encoding='utf-8'))
+          assert manifest['project'] == 'shared-auth/shared-auth-clients'
+          assert manifest['rollout']['phase'] == 'declared'
+          assert {'deviceMetadata', 'identityPreferences', 'sessionMetadata', 'syncCheckpoints'} <= set(manifest['dataScopes'])
+          notes = manifest['notes'].lower()
+          for excluded in ('passwords', 'mfa seeds', 'private keys', 'access tokens', 'refresh tokens', 'recovery codes'):
+              assert excluded in notes
+          PY

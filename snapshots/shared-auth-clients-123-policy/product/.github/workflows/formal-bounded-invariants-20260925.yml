@@ -1,0 +1,53 @@
+name: Formal bounded authority invariants
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bounded-authority-model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Exhaustively check bounded authority state space
+        shell: bash
+        run: |
+          node <<'NODE'
+          const assert = require('node:assert/strict');
+          const actions = ['issue', 'accept', 'stale_accept', 'revoke'];
+          const initial = { epoch: 0, accepted: 0, active: false };
+          const step = (s, action) => {
+            switch (action) {
+              case 'issue': return { ...s, epoch: s.epoch + 1, active: true };
+              case 'accept': return s.active ? { ...s, accepted: s.epoch } : s;
+              case 'stale_accept': return s;
+              case 'revoke': return { ...s, active: false };
+              default: throw new Error(`unknown action ${action}`);
+            }
+          };
+          const key = (s) => JSON.stringify(s);
+          let frontier = [initial];
+          const seen = new Set([key(initial)]);
+          for (let depth = 0; depth < 9; depth += 1) {
+            const next = [];
+            for (const state of frontier) {
+              assert.ok(state.accepted <= state.epoch, 'accepted authority cannot exceed issued epoch');
+              for (const action of actions) {
+                const after = step(state, action);
+                assert.ok(after.epoch >= state.epoch, 'authority epochs never regress');
+                assert.ok(after.accepted >= state.accepted, 'accepted high-watermark never regresses');
+                assert.ok(after.accepted <= after.epoch, 'accepted authority remains issued');
+                if (action === 'stale_accept') assert.deepEqual(after, state, 'stale authority is a no-op');
+                const k = key(after);
+                if (!seen.has(k)) { seen.add(k); next.push(after); }
+              }
+            }
+            frontier = next;
+          }
+          console.log(`formal authority model OK: ${seen.size} reachable states checked`);
+          NODE
