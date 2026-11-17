@@ -1,0 +1,42 @@
+name: certify Shared Auth lib PR 42
+
+on:
+  pull_request:
+    paths:
+      - 'candidates/shared-auth-lib-pr42/**'
+      - '.github/workflows/certify-shared-auth-lib-pr-42.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  node-edge-jwt:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@1e60f620b9541d14bece96c5465dc8ee9832be0b
+        with:
+          node-version: '22'
+
+      - name: Verify exact product blobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git hash-object candidates/shared-auth-lib-pr42/package.json)" = "f79e63f7cd32bd21ad9502eb9667a2bc4056ddf1"
+          test "$(git hash-object candidates/shared-auth-lib-pr42/provider-jwt.mjs)" = "69d0ecc47bbd5c41f42f4b3448f1883394a29809"
+          test "$(git hash-object candidates/shared-auth-lib-pr42/provider-jwt.test.mjs)" = "13ae69b838498f1acfa9edae823f2f3f5d93a200"
+
+      - name: Syntax, package export, and adversarial tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd candidates/shared-auth-lib-pr42
+          node --check provider-jwt.mjs
+          node --check provider-jwt.test.mjs
+          node -e 'const p=require("./package.json"); if (p.exports?.["./provider-jwt"] !== "./provider-jwt.mjs") process.exit(1)'
+          node --test provider-jwt.test.mjs

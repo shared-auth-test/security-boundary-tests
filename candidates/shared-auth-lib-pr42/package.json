@@ -1,0 +1,27 @@
+{
+  "name": "@shared-auth/lib-js",
+  "version": "0.1.0",
+  "description": "Plain-ESM mirror of the shared-auth dual-auth race for zero-tooling JS consumers.",
+  "type": "module",
+  "main": "race.mjs",
+  "private": true,
+  "license": "UNLICENSED",
+  "oresLint": {
+    "note": "Declared, not installed. ores-lint resolves these from a global install - see .ores-lint/README.md",
+    "requires": {
+      "eslint": ">=9",
+      "typescript-eslint": ">=8 (optional; without it .ts files are skipped)"
+    },
+    "install": "npm i -g eslint typescript-eslint"
+  },
+  "scripts": {
+    "lint:ores": "if [ -f ../.ores-lint/lint.sh ]; then sh ../.ores-lint/lint.sh; else echo 'ores-lint not installed'; fi",
+    "prepublishOnly": "npm run lint:ores",
+    "test": "node --test *.test.mjs"
+  },
+  "exports": {
+    ".": "./race.mjs",
+    "./identity": "./identity.mjs",
+    "./provider-jwt": "./provider-jwt.mjs"
+  }
+}
