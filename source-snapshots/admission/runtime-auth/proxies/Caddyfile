@@ -1,0 +1,31 @@
+{
+    admin off
+    auto_https off
+    log {
+        output discard
+    }
+}
+http://127.0.0.1:9080 {
+    route {
+        forward_auth 127.0.0.1:9081 {
+            uri /auth/verify?
+            header_up -*
+            header_up Host 127.0.0.1
+            header_up Authorization {http.request.header.Authorization}
+            header_up X-Forwarded-Uri /auth/verify
+            header_up X-Forwarded-Method GET
+            transport http {
+                dial_timeout 200ms
+                response_header_timeout 1s
+            }
+        }
+        reverse_proxy 127.0.0.1:9082 {
+            header_up -*
+            header_up Host 127.0.0.1
+            header_up Authorization {http.request.header.Authorization}
+            header_up Content-Type {http.request.header.Content-Type}
+            header_up Content-Encoding {http.request.header.Content-Encoding}
+            header_up Accept {http.request.header.Accept}
+        }
+    }
+}
