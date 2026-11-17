@@ -1,0 +1,101 @@
+name: TypeSpec and JSON Schema peer-authority parity
+
+on:
+  pull_request:
+    paths:
+      - "test/fixtures/schema-authority-canary/**"
+      - "contract-admission/contract-ir-consumer.json"
+      - ".github/workflows/typespec-json-schema-peer-authority.yml"
+  push:
+    branches: [main, master, dev]
+    paths:
+      - "test/fixtures/schema-authority-canary/**"
+      - "contract-admission/contract-ir-consumer.json"
+      - ".github/workflows/typespec-json-schema-peer-authority.yml"
+  schedule:
+    - cron: "7 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: schema-peer-authority-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out exact head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify checked-out revision and unresolved-conflict absence
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          git diff --check
+          status=0
+          git grep -n -I -E '^(<<<<<<< .+|=======|>>>>>>> .+)$' -- . || status=$?
+          test "$status" -eq 1
+      - name: Set up the tested Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.16.0
+      - name: Verify repository-owned consumer policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import assert from "node:assert/strict";
+          import { readFileSync } from "node:fs";
+          const manifest = JSON.parse(readFileSync("contract-admission/contract-ir-consumer.json", "utf8"));
+          assert.equal(manifest.schema, "ores.contract-ir-consumer/v1");
+          assert.equal(manifest.repository, process.env.GITHUB_REPOSITORY);
+          assert.equal(manifest.repositoryRole, "clients");
+          assert.equal(manifest.canonicalAuthorityRepository, "shared-auth/shared-auth-clients");
+          assert.equal(manifest.evidenceScope, "repository-local-canary-only");
+          assert.equal(manifest.validator.repository, "ORESoftware/typespec-json-schema-validator");
+          assert.equal(manifest.validator.actionCommit, "c745036456dd80408b83217118b8563edb8f6abd");
+          assert.equal(manifest.validator.contractIrSchema, "ores.typespec-json-schema-validator.contract-ir/v1");
+          assert.equal(manifest.authorityModel.precedence, "none");
+          assert.equal(manifest.admission.allowFallbackAuthority, false);
+          NODE
+      - name: Compare peer authorities and emit fresh Contract IR
+        uses: ORESoftware/typespec-json-schema-validator@c745036456dd80408b83217118b8563edb8f6abd
+        with:
+          typespec: test/fixtures/schema-authority-canary/main.tsp
+          schema: test/fixtures/schema-authority-canary/authored.schema.json
+          report: .typespec-json-schema-validator/report.json
+          sarif: .typespec-json-schema-validator/report.sarif
+          contract_ir: .typespec-json-schema-validator/contract-ir.json
+          output_dir: .typespec-json-schema-validator/generated
+          max_probes: "64"
+      # The two-declaration canary does not certify unrelated product contracts.
+      - name: Verify current evidence and complete consumer declaration scope
+        uses: ORESoftware/typespec-json-schema-validator/actions/verify-contract-ir@c745036456dd80408b83217118b8563edb8f6abd
+        with:
+          contract_ir: .typespec-json-schema-validator/contract-ir.json
+          report: .typespec-json-schema-validator/report.json
+          typespec: test/fixtures/schema-authority-canary/main.tsp
+          schema: test/fixtures/schema-authority-canary/authored.schema.json
+          generated_schema: .typespec-json-schema-validator/generated/typespec.generated.schema.json
+          expected_declarations: '["OreSchemaAuthority.AuthorityKind","OreSchemaAuthority.PeerAuthorityRegistration"]'
+      - name: Verify authored authorities were not modified
+        shell: bash
+        run: git diff --exit-code -- test/fixtures/schema-authority-canary/
+      - name: Retain receipt, Contract IR, SARIF, and generated witness
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: schema-peer-authority-${{ github.event.repository.name }}-${{ github.run_id }}
+          path: .typespec-json-schema-validator/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30

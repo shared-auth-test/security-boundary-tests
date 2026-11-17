@@ -1,0 +1,122 @@
+name: Required client language matrix
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: required-clients-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - run: bash scripts/validate-client-matrix.sh
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.12"
+      - run: python3 scripts/check-auth-lifecycle.py
+      - run: PYTHONPATH=clients/python/src python3 -m unittest discover -s clients/python/tests -p 'test_*.py'
+      - run: ruby -Iclients/ruby/lib clients/ruby/test/client_test.rb
+      - run: php -l clients/php/src/Client.php && php clients/php/tests/client_test.php
+
+  dart:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: clients/dart
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: dart-lang/setup-dart@65eb853c7ba17dde3be364c3d2858773e7144260
+        with:
+          sdk: stable
+      - run: dart pub get
+      - run: dart analyze
+      - run: dart test
+
+  beam:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: erlef/setup-beam@fc68ffb90438ef2936bbb3251622353b3dcb2f93
+        with:
+          otp-version: "28"
+          elixir-version: "1.18"
+          rebar3-version: "3"
+      - run: cd clients/erlang && rebar3 compile && rebar3 eunit
+      - run: cd clients/elixir && mix test
+
+  rust-wasm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: clients/wasm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
+      - run: cargo fmt --check
+      - run: cargo clippy --target wasm32-unknown-unknown --all-targets -- -D warnings
+      - run: cargo check --target wasm32-unknown-unknown
+
+  java-kotlin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Model-check the formal app authentication lifecycle
+        run: |
+          curl --fail --silent --show-error --location \
+            https://github.com/tlaplus/tlaplus/releases/download/v1.7.2/tla2tools.jar \
+            --output "$RUNNER_TEMP/tla2tools.jar"
+          echo "fa18543e44ed5974a85bd2c60c0dc16620ae117680ea8e693d2691999ed90b22  $RUNNER_TEMP/tla2tools.jar" \
+            | sha256sum --check
+          java -XX:+UseParallelGC -jar "$RUNNER_TEMP/tla2tools.jar" \
+            -config formal/AuthLifecycle.cfg formal/AuthLifecycle.tla
+      - run: cd clients/java && mvn --batch-mode --no-transfer-progress verify
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
+        with:
+          gradle-version: "8.10.2"
+      - run: gradle --no-daemon -p clients/kotlin contractTest
+
+  swift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: clients/swift
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - run: swift --version
+      - run: swift test --parallel

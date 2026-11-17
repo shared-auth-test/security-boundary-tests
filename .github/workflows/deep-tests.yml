@@ -36,3 +36,109 @@ jobs:
           PYTHONPATH: src
           DEEP_TEST_SEEDS: '0-49'
         run: python -m unittest discover -s tests -v
+
+
+  certify-clients-policy:
+    if: github.event_name == 'pull_request' && github.head_ref == 'certify-shared-auth-clients-123-policy-20260927'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      PRODUCT_SHA: 7ebb3eb6d57b729b313076e497aa045b6c303aec
+      ZED_PKG_INTERACTIVE: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: shared-auth/shared-auth-clients
+          ref: 7ebb3eb6d57b729b313076e497aa045b6c303aec
+          path: product
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Assert exact product head
+        run: test "$(git -C product rev-parse HEAD)" = "$PRODUCT_SHA"
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.11"
+      - name: Generated contract and repository policy
+        working-directory: product
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check --quiet jsonschema==4.25.1 referencing==0.36.2 rpds-py==0.27.0
+          python3 scripts/check-generated-contract.py --freeze --require-readonly
+          scripts/check-repository-policy.sh
+          python3 scripts/test_check_workflow_security.py
+          python3 scripts/check-workflow-security.py
+      - name: Install checksum-pinned Zed CLI v0.3.0
+        run: |
+          set -euo pipefail
+          a="$RUNNER_TEMP/zed.tar.gz"
+          d="$RUNNER_TEMP/zed-release"
+          curl --fail --location --retry 3 --retry-all-errors -o "$a" https://github.com/zed-pkg/zed-cli/releases/download/v0.3.0/zed-x86_64-unknown-linux-gnu.tar.gz
+          printf '%s  %s\n' f87576bc289e43ed647902527e7be70566445d2f1fd11249f067ab35547d4b8a "$a" | sha256sum --check --strict
+          mkdir -p "$d" "$HOME/.local/bin"
+          tar -xzf "$a" -C "$d"
+          z="$(find "$d" -type f -name zed -perm -111 -print -quit)"
+          test -n "$z"
+          install -m 0755 "$z" "$HOME/.local/bin/zed"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Source-owned Zed pre-push gate
+        working-directory: product
+        env:
+          GITHUB_TOKEN: ""
+        run: |
+          "$HOME/.local/bin/zed" --version
+          bash .githooks/pre-push --ci
+      - name: Compare client API peer authorities
+        uses: ORESoftware/typespec-json-schema-validator@bd503465dab8c5148fee722b443ed04ff126c9bf
+        with:
+          typespec: product/clients/client-api.tsp
+          schema: product/clients/client-api.schema.json
+          report: product/.typespec-json-schema-validator/client-api/report.json
+          sarif: product/.typespec-json-schema-validator/client-api/report.sarif
+          contract_ir: product/.typespec-json-schema-validator/client-api/contract-ir.json
+          output_dir: product/.typespec-json-schema-validator/client-api/generated
+          max_probes: "64"
+          seal_object_schemas: "true"
+          polymorphic_models_strategy: oneOf
+          quiet: "true"
+      - name: Compare auth lifecycle adapter peer authorities
+        uses: ORESoftware/typespec-json-schema-validator@bd503465dab8c5148fee722b443ed04ff126c9bf
+        with:
+          typespec: product/clients/auth-lifecycle-adapters.tsp
+          schema: product/clients/auth-lifecycle-adapters.schema.json
+          report: product/.typespec-json-schema-validator/auth-lifecycle-adapters/report.json
+          sarif: product/.typespec-json-schema-validator/auth-lifecycle-adapters/report.sarif
+          contract_ir: product/.typespec-json-schema-validator/auth-lifecycle-adapters/contract-ir.json
+          output_dir: product/.typespec-json-schema-validator/auth-lifecycle-adapters/generated
+          max_probes: "64"
+          seal_object_schemas: "true"
+          polymorphic_models_strategy: oneOf
+          quiet: "true"
+      - name: Negative semantic-drift canary
+        continue-on-error: true
+        uses: ORESoftware/typespec-json-schema-validator@bd503465dab8c5148fee722b443ed04ff126c9bf
+        with:
+          typespec: product/clients/auth-lifecycle-adapters.tsp
+          schema: product/tests/tjsv/auth-lifecycle-known-bad.schema.json
+          report: product/.typespec-json-schema-validator/auth-lifecycle-adapters-negative/report.json
+          sarif: product/.typespec-json-schema-validator/auth-lifecycle-adapters-negative/report.sarif
+          contract_ir: product/.typespec-json-schema-validator/auth-lifecycle-adapters-negative/contract-ir.json
+          output_dir: product/.typespec-json-schema-validator/auth-lifecycle-adapters-negative/generated
+          max_probes: "16"
+          seal_object_schemas: "true"
+          polymorphic_models_strategy: oneOf
+          quiet: "true"
+      - name: Require negative canary and verify adapter projections
+        working-directory: product
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('node:fs');
+          const p = '.typespec-json-schema-validator/auth-lifecycle-adapters-negative/report.json';
+          if (!fs.existsSync(p)) throw new Error('negative TJSV receipt missing');
+          const receipt = JSON.parse(fs.readFileSync(p, 'utf8'));
+          if (receipt.status !== 'stopped_for_evaluation') {
+            throw new Error('negative TJSV canary did not stop for evaluation: ' + JSON.stringify(receipt.status));
+          }
+          NODE
+          node scripts/check-auth-lifecycle-ts.mjs
+          python3 scripts/check-auth-lifecycle-adapters.py

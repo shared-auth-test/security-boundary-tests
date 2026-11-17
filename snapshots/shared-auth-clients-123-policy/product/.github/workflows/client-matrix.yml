@@ -1,0 +1,31 @@
+name: client-matrix
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: client-matrix-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.12'
+      - run: python3 scripts/check-client-matrix.py
+      - name: Compile C slice
+        run: cc -std=c11 -Wall -Wextra -Werror -Iclients/c/include -c clients/c/src/client.c -o /tmp/shared-auth-client-c.o
+      - name: Compile C++ slice
+        run: printf '#include "shared_auth/client.hpp"\nint main(){shared_auth::Client c{"https://example.invalid"}; return c.endpoint("session").empty();}\n' | c++ -std=c++17 -Wall -Wextra -Werror -Iclients/cpp/include -x c++ - -o /tmp/shared-auth-client-cpp
+      - run: python3 -m compileall -q clients/python/src

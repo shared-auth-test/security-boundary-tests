@@ -1,0 +1,64 @@
+{
+  "schemaVersion": "opto-sync.adoption.v1",
+  "project": "shared-auth/shared-auth-clients",
+  "clientPackage": {
+    "package": "opto-sync/opto-sync-clients",
+    "repository": "https://github.com/opto-sync/opto-sync-clients",
+    "version": "0.4.0",
+    "commit": "7629c7709248c923cc969e2f4f94e527986c8426"
+  },
+  "languages": [
+    "dart",
+    "gleam",
+    "rust",
+    "typescript"
+  ],
+  "dataScopes": [
+    "deviceMetadata",
+    "identityPreferences",
+    "sessionMetadata",
+    "syncCheckpoints"
+  ],
+  "localStores": [
+    "indexeddb",
+    "sqlite"
+  ],
+  "transports": [
+    "http",
+    "supabase-realtime",
+    "websocket"
+  ],
+  "writeStrategies": [
+    "local-durable",
+    "local-then-remote",
+    "remote-confirmed"
+  ],
+  "conflictPolicy": {
+    "arrayStrategy": "mergeByKey",
+    "resolveByTimestamp": true,
+    "lwwKeys": [
+      "updatedAt"
+    ],
+    "arrayMatchKeys": [
+      "id"
+    ],
+    "tombstones": true
+  },
+  "background": {
+    "webServiceWorker": true,
+    "mobileWorker": true,
+    "desktopWorker": true
+  },
+  "security": {
+    "authenticatedTransport": true,
+    "encryptedAtRest": true,
+    "secretsInManifest": false
+  },
+  "rollout": {
+    "phase": "declared",
+    "owners": [
+      "shared-auth"
+    ]
+  },
+  "notes": "Sync non-secret device metadata, identity preferences, session labels or revocation state, and causal checkpoints. Passwords, MFA seeds, private keys, passkey private material, cookies, access tokens, refresh tokens, and recovery codes remain outside Opto Sync."
+}

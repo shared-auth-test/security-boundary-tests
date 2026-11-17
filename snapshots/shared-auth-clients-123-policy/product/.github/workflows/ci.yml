@@ -1,0 +1,414 @@
+name: client-ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: client-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: "true"
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Test native Rust workspace packages
+        # The WASM crate imports browser functions and is compiled/clippy-checked
+        # for wasm32 in the required-client-language-matrix workflow.
+        run: cargo test --workspace --all-features --exclude shared-auth-client-wasm
+      - run: cargo metadata --format-version 1 --no-deps
+
+  go:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: clients/go
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: "1.22.x"
+          cache-dependency-path: clients/go/go.mod
+      - name: Check formatting
+        run: |
+          if test -n "$(gofmt -l .)"; then
+            gofmt -d .
+            exit 1
+          fi
+      - run: go vet ./...
+      - run: go test ./...
+
+  typescript:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: clients/ts
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts --no-audit --no-fund
+      - run: npm run check
+      - run: npm test
+      - run: npm run package:check
+
+  browser-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: clients/ts
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts --no-audit --no-fund
+      - run: npm exec -- playwright install --with-deps chromium firefox webkit
+      - run: npm run test:browser
+
+  dart:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: clients/dart
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dart-lang/setup-dart@7654d458321ee25acccccfdb86cd48bd95768ff1 # v1.8.0
+        with:
+          sdk: stable
+      - run: dart pub get
+      - run: dart analyze
+      - run: dart test
+
+  gleam:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: clients/gleam
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124
+        with:
+          otp-version: "27"
+          gleam-version: "1.17.0"
+          rebar3-version: "3"
+      - run: gleam deps download
+      - run: gleam check
+      - run: gleam test
+
+  fiducia-admin-validation:
+    if: github.head_ref == 'agent/temp-fiducia-admin-lockfile-gen-20260803'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    services:
+      postgres:
+        image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: fiducia_admin
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d fiducia_admin"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/fiducia_admin
+      CHROME_BIN: /usr/bin/google-chrome
+      PUPPETEER_SKIP_DOWNLOAD: "true"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: fiducia-cloud/fiducia-admin.rs
+          ref: agent/den-1379-shared-auth-cutover
+          path: repo
+          persist-credentials: false
+          submodules: recursive
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: fiducia-cloud/fiducia-interfaces
+          ref: 0ad257b6708117dcc3643a9fd15b0f92ca394c1f
+          path: fiducia-interfaces
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: fiducia-cloud/fiducia-sync
+          ref: e4cb47c9582e11de62c0f19ce3511d3b7c1cce04
+          path: fiducia-sync
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: fiducia-cloud/fiducia-test-config
+          ref: 026fcf28193c7baeb7f5feb68480a91539c1f0fa
+          path: fiducia-test-config
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: "1.95.0"
+          components: rustfmt, clippy
+      - name: Apply the exact admin cutover and format it
+        working-directory: repo
+        run: |
+          set -euo pipefail
+          git fetch origin 0aa7da78e3ddd0e32467e1f0ec55c5fa4c64e180 --depth=1
+          git show 0aa7da78e3ddd0e32467e1f0ec55c5fa4c64e180:.github/workflows/ci.yml > .github/workflows/ci.yml
+          rm -f .github/workflows/apply-den-1379-admin-cutover.yml
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          main = Path("src/main.rs")
+          text = main.read_text()
+          old_state = (
+              '    let state = Arc::new(AppState {\n'
+              '        auth_url: required_env("FIDUCIA_AUTH_URL")?,\n'
+              '        brain_url: required_env("FIDUCIA_BRAIN_URL")?,\n'
+              '        supabase_url: required_env("SUPABASE_URL")?,\n'
+              '        supabase_publishable_key: required_env("SUPABASE_PUBLISHABLE_KEY")?,\n'
+              '        db: Some(db),\n'
+          )
+          new_state = (
+              '    let auth_url = required_env("SHARED_AUTH_URL")?;\n'
+              '    session::initialize(&auth_url).map_err(|error| {\n'
+              '        io::Error::new(\n'
+              '            io::ErrorKind::InvalidInput,\n'
+              '            format!("invalid Shared Auth configuration: {error}"),\n'
+              '        )\n'
+              '    })?;\n'
+              '    let supabase_url = required_env("SUPABASE_URL")?;\n'
+              '    let supabase_publishable_key = required_env("SUPABASE_PUBLISHABLE_KEY")?;\n'
+              '\n'
+              '    let state = Arc::new(AppState {\n'
+              '        auth_url,\n'
+              '        brain_url: required_env("FIDUCIA_BRAIN_URL")?,\n'
+              '        supabase_url,\n'
+              '        supabase_publishable_key,\n'
+              '        db: Some(db),\n'
+          )
+          if old_state not in text:
+              raise SystemExit("admin state initialization block did not match")
+          text = text.replace(old_state, new_state, 1)
+
+          old_login = (
+              '    let Some(session) = session::from_bearer(&st.auth_url, &password_session.access_token).await\n'
+              '    else {\n'
+              '        return login_page(&st, Some("The identity could not be verified."));\n'
+              '    };\n'
+              '    if !session.is_admin {\n'
+              '        return (StatusCode::FORBIDDEN, views::forbidden(&session, None)).into_response();\n'
+              '    }\n'
+              '    match operator_is_enabled(&st, &session).await {\n'
+              '        Ok(true) => {}\n'
+              '        Ok(false) => {\n'
+              '            return (StatusCode::FORBIDDEN, views::forbidden(&session, None)).into_response()\n'
+              '        }\n'
+              '        Err(error) => return dependency_error("operator_registry_unavailable", error),\n'
+              '    }\n'
+              '\n'
+              '    let mut response = redirect("/");\n'
+              '    append_set_cookie(\n'
+              '        &mut response,\n'
+              '        &make_session_cookie(&password_session.access_token),\n'
+              '    );\n'
+          )
+          new_login = (
+              '    let Some(verified) =\n'
+              '        session::from_bearer(&st.auth_url, &password_session.access_token).await\n'
+              '    else {\n'
+              '        return login_page(\n'
+              '            &st,\n'
+              '            Some("Shared Auth could not authorize this admin identity."),\n'
+              '        );\n'
+              '    };\n'
+              '    let session = verified.session;\n'
+              '    let Some(session_upgrade) = verified.session_upgrade else {\n'
+              '        return dependency_error(\n'
+              '            "shared_auth_session_upgrade_missing",\n'
+              '            "Shared Auth authorized the provider token without issuing a reusable session",\n'
+              '        );\n'
+              '    };\n'
+              '    if !session.is_admin {\n'
+              '        return (StatusCode::FORBIDDEN, views::forbidden(&session, None)).into_response();\n'
+              '    }\n'
+              '    match operator_is_enabled(&st, &session).await {\n'
+              '        Ok(true) => {}\n'
+              '        Ok(false) => {\n'
+              '            return (StatusCode::FORBIDDEN, views::forbidden(&session, None)).into_response()\n'
+              '        }\n'
+              '        Err(error) => return dependency_error("operator_registry_unavailable", error),\n'
+              '    }\n'
+              '\n'
+              '    let mut response = redirect("/");\n'
+              '    append_set_cookie(\n'
+              '        &mut response,\n'
+              '        &make_session_cookie(session_upgrade.access_token()),\n'
+              '    );\n'
+          )
+          if old_login not in text:
+              raise SystemExit("admin login verification block did not match")
+          main.write_text(text.replace(old_login, new_login, 1))
+
+          harness = Path("tests/admin-browser-harness.mjs")
+          value = harness.read_text()
+          old = '        FIDUCIA_AUTH_URL: controlPlane.url,\n'
+          new = (
+              '        SHARED_AUTH_URL: controlPlane.url,\n'
+              '        SHARED_AUTH_ISSUER: "https://auth.fiducia.invalid",\n'
+              '        SHARED_AUTH_AUDIENCE: "fiducia-admin",\n'
+              '        SHARED_AUTH_INTROSPECT_SECRET: TEST_INTERNAL_SECRET,\n'
+          )
+          if old not in value:
+              raise SystemExit("admin browser auth environment did not match")
+          harness.write_text(value.replace(old, new, 1))
+
+          old_pin = "6081bc3f3b7cbe0312870968b61acc38ca91c66a"
+          new_pin = "0ad257b6708117dcc3643a9fd15b0f92ca394c1f"
+          for path in [
+              Path("Dockerfile"),
+              Path(".github/workflows/ci.yml"),
+              Path(".github/workflows/docker.yml"),
+              Path("scripts/check-sibling-pins.py"),
+          ]:
+              if path.exists():
+                  path.write_text(path.read_text().replace(old_pin, new_pin))
+          leftovers = []
+          for path in Path(".").rglob("*"):
+              if not path.is_file() or ".git" in path.parts:
+                  continue
+              try:
+                  if old_pin in path.read_text():
+                      leftovers.append(str(path))
+              except UnicodeDecodeError:
+                  pass
+          if leftovers:
+              raise SystemExit(f"stale interfaces pin remains in: {leftovers}")
+          PY
+
+          cargo generate-lockfile
+          cargo fmt --all
+          git diff --check
+          python3 - <<'PY'
+          import subprocess
+          allowed = {
+              ".github/workflows/ci.yml",
+              ".github/workflows/docker.yml",
+              "Cargo.lock",
+              "Dockerfile",
+              "scripts/check-sibling-pins.py",
+              "src/main.rs",
+              "tests/admin-browser-harness.mjs",
+          }
+          changed = set(subprocess.check_output(
+              ["git", "diff", "--name-only"], text=True
+          ).splitlines())
+          unexpected = sorted(changed - allowed)
+          missing = sorted(allowed - changed)
+          if unexpected or missing:
+              raise SystemExit(
+                  f"unexpected patch shape: unexpected={unexpected}, missing={missing}"
+              )
+          print("validated patch paths:")
+          for path in sorted(changed):
+              print(path)
+          PY
+      - name: Validate permanent GitHub Actions
+        uses: docker://rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
+        with:
+          args: repo/.github/workflows/ci.yml repo/.github/workflows/docker.yml
+      - name: Sibling dependency pins stay synchronized
+        working-directory: repo
+        run: python3 scripts/check-sibling-pins.py
+      - name: CLI flag contract
+        working-directory: repo
+        run: |
+          make -B -C vendor/flags-2-env all
+          vendor/flags-2-env/build/flags2env audit .cli-flags.toml
+      - name: Rust formatting
+        working-directory: repo
+        run: cargo fmt --all --check
+      - name: Rust lint
+        working-directory: repo
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - name: Rust tests
+        working-directory: repo
+        run: cargo test --locked --all-targets --all-features
+      - uses: taiki-e/install-action@065d6a08a14e61e89fb0a4c10eecdbdef39c7d8e # v2
+        with:
+          tool: cargo-audit@0.22.2
+      - name: Rust dependency audit
+        working-directory: repo
+        run: cargo audit
+      - name: Apply canonical admin schema
+        run: psql "$DATABASE_URL" --set ON_ERROR_STOP=1 --file fiducia-interfaces/sql/admin.sql
+      - name: Install browser dependencies without lifecycle scripts
+        working-directory: repo
+        run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Verify browser prerequisite
+        run: |
+          test -x "$CHROME_BIN"
+          "$CHROME_BIN" --version
+          node --version
+          npm --version
+      - name: Run real-browser admin journeys
+        working-directory: repo
+        run: npm run test:browser
+      - name: Build production container graph
+        working-directory: repo
+        run: |
+          docker build \
+            --build-arg INTERFACES_REF=0ad257b6708117dcc3643a9fd15b0f92ca394c1f \
+            --build-arg SYNC_REF=e4cb47c9582e11de62c0f19ce3511d3b7c1cce04 \
+            --tag fiducia-admin:pr .
+      - name: Preserve validated branch patch
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fiducia-admin-validated-patch
+          path: |
+            repo/.github/workflows/ci.yml
+            repo/.github/workflows/docker.yml
+            repo/Cargo.lock
+            repo/Dockerfile
+            repo/scripts/check-sibling-pins.py
+            repo/src/main.rs
+            repo/tests/admin-browser-harness.mjs
+          if-no-files-found: error
+          retention-days: 1

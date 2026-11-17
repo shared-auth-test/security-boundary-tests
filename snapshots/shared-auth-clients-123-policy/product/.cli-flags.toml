@@ -1,0 +1,30 @@
+[help]
+url = "https://github.com/shared-auth/shared-auth-clients"
+columns = ["options", "env", "type", "default", "description"]
+
+[parse]
+allow_unknown = false
+
+[env]
+ignore = ["SHARED_AUTH_INTROSPECT_SECRET", "AUTH_SUPABASE_PROJECTS"]
+ignore_prefixes = ["AUTH_SUPABASE_"]
+
+[flags.authority]
+env = "SHARED_AUTH_BASE_URL"
+aliases = ["authority", "shared-auth-base-url"]
+type = "string"
+default = "http://127.0.0.1:8120"
+help = "Shared-auth authority used by examples and integration checks."
+
+[flags.timeout-ms]
+env = "SHARED_AUTH_TIMEOUT_MS"
+aliases = ["timeout-ms"]
+type = "integer"
+default = 10000
+help = "Client request timeout in milliseconds."
+
+[flags.otel-endpoint]
+env = "OTEL_EXPORTER_OTLP_ENDPOINT"
+aliases = ["otel-endpoint"]
+type = "string"
+help = "OTLP collector inherited by instrumented applications."
